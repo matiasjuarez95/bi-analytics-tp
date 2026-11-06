@@ -55,10 +55,14 @@ REGLAS = {
                                               instrumentos_esperados=None),
 }
 
-# SUPUESTOS (sin confirmar con el docente; documentados en docs/procesamiento_6_1.md)
-CURSADA_CERRADA = False          # mientras sea False, ningún estado "Libre/Regular" es definitivo
-RECUPERATORIO_MODO = "reemplaza"  # "reemplaza" | "mayor_nota" | "aparte"
-NOTAS_DUPLICADAS_CRITERIO = "mayor_nota"  # solo se aplica si aparecen duplicados (hoy hay 0)
+# DECISIONES (las confirmadas por el docente se detallan en docs/procesamiento_6_1.md)
+#  - Instrumentos faltantes: un examen que existe y el alumno no rindió vale 0 (confirmado).
+#  - Álgebra: se trabaja con los instrumentos disponibles (los faltantes son a propósito, confirmado).
+#  - Recuperatorio (confirmado): sin nota original queda el recuperatorio; con original aprobada se conserva
+#    la original (no debería recuperar); con original desaprobada queda la mejor de las dos.
+CURSADA_CERRADA = False          # SIN CONFIRMAR: mientras sea False, ningún estado Regular/Libre es definitivo
+RECUPERATORIO_MODO = "docente"   # "docente" | "mayor_nota" | "reemplaza" | "aparte"
+NOTAS_DUPLICADAS_CRITERIO = "mayor_nota"  # solo se aplica si aparecen duplicados (hoy hay 0; supuesto)
 
 ID_ALUMNO = re.compile(r"^ALU_\d{4}$")
 ESTADOS_DEFINIDOS = ("Promociona", "Regular", "Libre")
@@ -436,47 +440,69 @@ def leer_calificaciones(archivo, asig):
         descartar(df[df["id_estudiante"].duplicated()], "calificaciones", asig, f"Nota repetida en '{instrumento}'")
         df = df.drop_duplicates("id_estudiante")
     df["nota_100"] = (df["puntos"] / df["maximo"] * 100).round(2)
+    df["nota_10"] = (df["puntos"] / df["maximo"] * 10).round(2)   # instrumento normalizado a 10 (p. ej. 25/25*10)
     df["es_recuperatorio"] = instrumento.lower().startswith("recuperatorio")
     df["tipo_instrumento"] = _tipo_instrumento(instrumento)
     return df
+
+
+def _aprobada(c):
+    """Aprobada según la columna 'observacion' del LMS; si no existe, se usa nota_100 >= 60."""
+    if "observacion" in c.columns:
+        return c["observacion"].astype(str).str.strip().str.lower().eq("aprobada")
+    return c["nota_100"] >= 60
 
 
 def aplicar_recuperatorios(cal, modo=RECUPERATORIO_MODO):
     """
     Vincula cada recuperatorio con su evaluación original y marca qué fila vale para la nota final
     (usa_en_nota_final). SE ELIGE LA FILA COMPLETA (no se mezclan valores de registros distintos).
-      reemplaza   : el recuperatorio reemplaza a la original (SUPUESTO sin confirmar)
-      mayor_nota  : vale la mayor de las dos
-      aparte      : el recuperatorio cuenta como un instrumento más
+      docente    : (CONFIRMADO POR EL DOCENTE) sin nota original -> queda el recuperatorio; original aprobada ->
+                   se conserva la original (no debería recuperar); original desaprobada -> la mejor de las dos
+      mayor_nota : vale la mayor de las dos
+      reemplaza  : el recuperatorio siempre reemplaza a la original
+      aparte     : el recuperatorio cuenta como un instrumento más
+    Las filas no usadas NO se borran: quedan en calificaciones con usa_en_nota_final=False.
     """
-    if modo not in ("reemplaza", "mayor_nota", "aparte"):
+    if modo not in ("docente", "mayor_nota", "reemplaza", "aparte"):
         raise ValueError(f"Modo de recuperatorio inválido: {modo}")
     c = cal.copy().reset_index(drop=True)
+    c["aprobada"] = _aprobada(c)
     base = c["instrumento"].str.replace(r"^\s*Recuperatorio\s*:\s*", "", regex=True).str.strip()
     c["instrumento_base"] = np.where(c["es_recuperatorio"] & (modo != "aparte"), base, c["instrumento"])
     claves = ["id_estudiante", "asignatura", "instrumento_base"]
     if modo == "aparte" or not c["es_recuperatorio"].any():
         c["usa_en_nota_final"] = True
-    else:
-        if modo == "reemplaza":
-            orden = c.sort_values("es_recuperatorio", kind="mergesort")   # originales primero
-            elegidas = orden.drop_duplicates(claves, keep="last").index
-        else:
-            elegidas = c.dropna(subset=["nota_100"]).groupby(claves)["nota_100"].idxmax().values
-        c["usa_en_nota_final"] = c.index.isin(elegidas)
-        # el recuperatorio debe vincularse a una evaluación existente en los datos
-        originales = set(zip(c.loc[~c["es_recuperatorio"], "asignatura"], c.loc[~c["es_recuperatorio"], "instrumento"]))
-        for (asig, inst, b), _ in c[c["es_recuperatorio"]].groupby(["asignatura", "instrumento", "instrumento_base"]):
-            if (asig, b) not in originales:
-                registrar("calificaciones", asig, f"Recuperatorio '{inst}' sin evaluación original en los datos", 1,
-                          f"No se pudo vincular con '{b}': se trata como instrumento propio")
-        r = c[c["es_recuperatorio"]].merge(
-            c[~c["es_recuperatorio"]][claves + ["nota_100"]], on=claves, how="left", suffixes=("", "_orig"))
-        for asig, g in r.groupby("asignatura"):
-            registrar("calificaciones", asig, "Alumnos que rindieron recuperatorio", len(g),
-                      f"Modo '{modo}' (SUPUESTO sin confirmar). Mejoraron: {int((g['nota_100'] > g['nota_100_orig']).sum())}, "
-                      f"empeoraron: {int((g['nota_100'] < g['nota_100_orig']).sum())}, "
-                      f"sin nota original: {int(g['nota_100_orig'].isna().sum())}")
+        return c
+
+    orig, rec = c[~c["es_recuperatorio"]], c[c["es_recuperatorio"]]
+    # el recuperatorio debe vincularse a una evaluación existente en los datos
+    originales = set(zip(orig["asignatura"], orig["instrumento"]))
+    for (asig, inst, b), _ in rec.groupby(["asignatura", "instrumento", "instrumento_base"]):
+        if (asig, b) not in originales:
+            registrar("calificaciones", asig, f"Recuperatorio '{inst}' sin evaluación original en los datos", 1,
+                      f"No se pudo vincular con '{b}': se trata como instrumento propio")
+    m = (rec.reset_index().rename(columns={"index": "idx_r"})[["idx_r"] + claves + ["nota_100"]]
+         .merge(orig.reset_index().rename(columns={"index": "idx_o"})[["idx_o"] + claves + ["nota_100", "aprobada"]],
+                on=claves, how="left", suffixes=("_r", "_o")))
+    sin_orig = m["idx_o"].isna()
+    apro = m["aprobada"].fillna(False).astype(bool)
+    mejora = m["nota_100_r"] > m["nota_100_o"]
+    if modo == "docente":
+        usa_r = sin_orig | (~apro & mejora)
+    elif modo == "mayor_nota":
+        usa_r = sin_orig | mejora
+    else:  # reemplaza
+        usa_r = pd.Series(True, index=m.index)
+    reemplazadas = set(m.loc[usa_r & ~sin_orig, "idx_o"].astype(int))
+    usa = (set(orig.index) - reemplazadas) | set(m.loc[usa_r, "idx_r"].astype(int))
+    c["usa_en_nota_final"] = c.index.isin(list(usa))
+    for asig, g in m.groupby("asignatura"):
+        so, ap, me, ur = sin_orig[g.index], apro[g.index], mejora[g.index], usa_r[g.index]
+        registrar("calificaciones", asig, "Alumnos que rindieron recuperatorio", len(g),
+                  f"Modo '{modo}'. Sin nota original (queda el recuperatorio): {int(so.sum())}; "
+                  f"original aprobada: {int((~so & ap).sum())}; original desaprobada: {int((~so & ~ap).sum())} "
+                  f"(recuperatorio mejor en {int((~so & ~ap & me).sum())}). Recuperatorios que quedan como nota: {int(ur.sum())}")
     return c
 
 
@@ -499,14 +525,17 @@ def calcular_notas_finales(cal, universo, cursada_cerrada=None):
     """
     universo: DataFrame (id_estudiante, asignatura).  cal: con aplicar_recuperatorios() ya aplicado.
 
-    Álgebra (acumulativo, 120 pts):
-      puntos_acumulados (REAL), puntos_maximos_observados, completitud_datos, y proyecciones
-      (ESTIMACIÓN). Estado definitivo: solo "Promociona" si ya acumuló >= 85 (los puntos no bajan);
-      "Regular/Libre" recién cuando los datos estén completos y la cursada cerrada.
-    Probabilidad / Algoritmos (promedio):
-      promedio_observados (solo lo rendido) y promedio_con_faltantes (lo no rendido = 0, dividido por los
-      instrumentos presentes en los datos; NO es el total oficial salvo que se confirme).
-    Sin notas nunca pasa a Libre.
+    Criterio del docente: si un examen existe (otros alumnos lo rindieron) y el alumno no lo rindió, vale 0.
+    Se calcula sobre los instrumentos PRESENTES en los datos.
+
+    nota_a_la_fecha (la que usa el semáforo; es una estimación mientras la cursada siga abierta):
+      Álgebra  : puntos acumulados / puntos máximos observados * 120 (= proyeccion_120_observados)
+      Prob/Algo: promedio_con_faltantes
+    Se conservan además los valores reales y alternativos:
+      puntos_acumulados (REAL), proyeccion_120_rendidos (solo sobre lo rendido), promedio_normalizado_10
+      (cada instrumento llevado a 10: p. ej. 25/25*10), promedio_observados (solo lo rendido).
+    Estado definitivo: solo "Promociona" en Álgebra con >= 85 puntos acumulados reales; el resto queda
+    "Pendiente" hasta que la cursada esté cerrada. Sin notas nunca pasa a Libre.
     """
     cursada_cerrada = CURSADA_CERRADA if cursada_cerrada is None else cursada_cerrada
     if "usa_en_nota_final" in cal.columns:
@@ -527,45 +556,41 @@ def calcular_notas_finales(cal, universo, cursada_cerrada=None):
         r["instrumentos_esperados"] = _entero_o_na(esperados, n)
         r["completitud_datos"] = round(en_datos / esperados, 3) if esperados else np.nan
         r["completitud_alumno"] = (r["instrumentos_rendidos"] / en_datos).round(3) if en_datos else np.nan
-        datos_completos = bool(esperados and en_datos >= esperados)
-        r["datos_completos"] = datos_completos
+        r["datos_completos"] = bool(esperados and en_datos >= esperados)
         sin = (r["instrumentos_rendidos"] == 0).to_numpy()
-        cerrado_y_completo = np.full(n, bool(cursada_cerrada and datos_completos))
+        cerrada = np.full(n, bool(cursada_cerrada))
 
         if regla["tipo"] == "acumulativo":
             acum = r["id_estudiante"].map(g["puntos"].sum()).where(~sin)
             max_obs = float(c.groupby(base_col)["maximo"].max().sum())
             posibles = r["id_estudiante"].map(g["maximo"].sum())
-            r["puntos_acumulados"] = acum
+            n10 = (c["puntos"] / c["maximo"] * 10).groupby(c["id_estudiante"]).sum()
+            r["puntos_acumulados"] = acum                                                       # REAL
             r["puntos_maximos_observados"] = max_obs
-            r["proyeccion_120_rendidos"] = (acum / posibles * regla["maximo"]).round(2)       # ESTIMACIÓN
+            r["proyeccion_120_rendidos"] = (acum / posibles * regla["maximo"]).round(2)           # ESTIMACIÓN
             r["proyeccion_120_observados"] = (acum / max_obs * regla["maximo"]).round(2) if max_obs else np.nan
+            r["promedio_normalizado_10"] = (r["id_estudiante"].map(n10) / en_datos).round(2).where(~sin) if en_datos else np.nan
             r["rendimiento_observado_pct"] = (acum / posibles * 100).round(2)
-            a = acum.to_numpy(dtype=float)
-            r["estado_provisorio"] = np.select(
-                [sin, a >= regla["promociona"], a >= regla["regular"], cerrado_y_completo],
-                ["Sin notas", "Promociona", "Regular", "Libre"], default="Pendiente")
-            r["estado_definitivo"] = np.select(
-                [sin, a >= regla["promociona"], cerrado_y_completo & (a >= regla["regular"]), cerrado_y_completo],
-                ["Sin notas", "Promociona", "Regular", "Libre"], default="Pendiente")
+            valor = r["proyeccion_120_observados"]
+            real_promociona = acum.to_numpy(dtype=float) >= regla["promociona"]
         else:
             prom_obs = r["id_estudiante"].map(g["nota_100"].mean()).round(2).where(~sin)
             suma = r["id_estudiante"].map(g["nota_100"].sum())
             prom_falt = (suma / en_datos).round(2).where(~sin) if en_datos else pd.Series(np.nan, index=r.index)
             r["promedio_observados"] = prom_obs
-            r["promedio_con_faltantes"] = prom_falt                      # ESTIMACIÓN (faltantes = 0)
-            r["denominador_confirmado"] = esperados is not None
+            r["promedio_con_faltantes"] = prom_falt            # lo no rendido = 0 (criterio del docente)
+            r["denominador_confirmado"] = True                  # instrumentos presentes en los datos
             r["rendimiento_observado_pct"] = prom_obs
-            p = prom_obs.to_numpy(dtype=float)
-            r["estado_provisorio"] = np.select(
-                [sin, p >= regla["promociona"], p >= regla["regular"]], ["Sin notas", "Promociona", "Regular"],
-                default="Libre")
-            pf = prom_falt.to_numpy(dtype=float)
-            definitivo_posible = np.full(n, bool(cursada_cerrada and esperados is not None))
-            r["estado_definitivo"] = np.select(
-                [sin, definitivo_posible & (pf >= regla["promociona"]), definitivo_posible & (pf >= regla["regular"]),
-                 definitivo_posible],
-                ["Sin notas", "Promociona", "Regular", "Libre"], default="Pendiente")
+            valor = prom_falt
+            real_promociona = np.zeros(n, dtype=bool)
+        r["nota_a_la_fecha"] = valor
+        r["escala_nota_a_la_fecha"] = regla["maximo"]
+        v = valor.to_numpy(dtype=float)
+        r["estado_provisorio"] = np.select([sin, v >= regla["promociona"], v >= regla["regular"]],
+                                           ["Sin notas", "Promociona", "Regular"], default="Libre")
+        r["estado_definitivo"] = np.select(
+            [sin, real_promociona, cerrada & (v >= regla["promociona"]), cerrada & (v >= regla["regular"]), cerrada],
+            ["Sin notas", "Promociona", "Promociona", "Regular", "Libre"], default="Pendiente")
         res.append(r)
     return pd.concat(res, ignore_index=True)
 
@@ -621,14 +646,13 @@ def validar_modelo(sit, notas, cal, mat, universo, personal, cursada_cerrada=Fal
     chk("'Sin notas' no termina como Libre/Regular/Promociona",
         (sit.loc[sin, ["estado_provisorio", "estado_definitivo"]] == "Sin notas").all().all(),
         f"{int(sin.sum())} alumnos sin notas")
-    alg = sit["asignatura"] == "Álgebra"
-    incompleto = alg & ~sit["datos_completos"].fillna(False).astype(bool)
-    malos = incompleto & sit["estado_definitivo"].isin(["Regular", "Libre"])
-    chk("Álgebra con datos incompletos no tiene Regular/Libre definitivo (la proyección no define estados)",
-        not malos.any(), f"{int(malos.sum())} casos")
     if not cursada_cerrada:
-        libre_def = (sit["estado_definitivo"] == "Libre").sum()
-        chk("con la cursada abierta no hay estados 'Libre' definitivos", libre_def == 0, f"{int(libre_def)} casos")
+        # la estimación (proyección / promedio con faltantes) nunca define un estado definitivo
+        legit = (sit["asignatura"] == "Álgebra") & (sit["puntos_acumulados"] >= REGLAS["Álgebra"]["promociona"])
+        mal = ~sit["estado_definitivo"].isin(["Promociona", "Pendiente", "Sin notas"]) | \
+              ((sit["estado_definitivo"] == "Promociona") & ~legit)
+        chk("con la cursada abierta no hay Regular/Libre definitivos ni Promociona sin puntos reales suficientes",
+            not mal.any(), f"{int(mal.sum())} casos")
     ids_personal = set(zip(personal["id_estudiante"], personal["asignatura"])) if len(personal) else set()
     ids_mat = set(zip(mat["id_estudiante"], mat["asignatura"]))
     chk("el personal excluido no incluye alumnos matriculados", not (ids_personal & ids_mat),
@@ -726,8 +750,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="ETL 6.1 del TFI (LMS)")
     ap.add_argument("raw", help="carpeta con los Excel originales (p. ej. data/raw)")
     ap.add_argument("processed", help="carpeta de salida (p. ej. data/processed)")
-    ap.add_argument("--recuperatorio", choices=["reemplaza", "mayor_nota", "aparte"], default=RECUPERATORIO_MODO,
-                    help="cómo se trata el recuperatorio (supuesto sin confirmar)")
+    ap.add_argument("--recuperatorio", choices=["docente", "mayor_nota", "reemplaza", "aparte"],
+                    default=RECUPERATORIO_MODO, help="cómo se trata el recuperatorio (por defecto, la regla del docente)")
     ap.add_argument("--cursada-cerrada", action="store_true",
                     help="habilita estados definitivos Regular/Libre (solo si la cursada terminó)")
     a = ap.parse_args(argv)

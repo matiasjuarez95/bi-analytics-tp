@@ -20,15 +20,17 @@ python -m pytest tests/ -v
   `algebra/`, `probabilidad/`, `algoritmos/` y `matriculados/` (ver `data/raw/README.md`).
 - Los nombres se detectan sin importar tildes ni mayúsculas. Si falta un archivo, o hay más de un
   candidato para un reporte único, el programa **se detiene con un mensaje claro** (no elige uno al azar).
-- Opciones: `--recuperatorio {reemplaza,mayor_nota,aparte}` y `--cursada-cerrada` (ver "Supuestos").
+- Opciones: `--recuperatorio {docente,mayor_nota,reemplaza,aparte}` (por defecto `docente`) y
+  `--cursada-cerrada` (habilita los estados definitivos Regular/Libre; ver "Decisiones").
 - Las salidas van a `data/processed/` (CSV, y Parquet si está instalado `pyarrow`). No se versionan.
 
 ## Principios
 
 1. **No se oculta nada.** Cada filtro registra las cantidades antes y después en `informe_calidad_datos`,
    y las filas descartadas quedan en `descartados.csv`.
-2. **Lo real se separa de lo estimado.** Una proyección o un promedio con faltantes nunca define un estado definitivo.
-3. **Si falta información, el estado queda "Pendiente"**, no se asigna una promoción basada en un supuesto.
+2. **Lo real se separa de lo estimado.** Una proyección o un promedio con faltantes se identifica como
+   estimación y nunca define un estado *definitivo*.
+3. **Si falta información para un estado definitivo, queda "Pendiente"**, no se asigna una promoción basada en un supuesto.
 
 ## Tablas generadas (resultados de la corrida con los 26 Excel)
 
@@ -43,8 +45,8 @@ python -m pytest tests/ -v
 | `situacion_estudiante` | 957 | **Tabla central**: una fila por alumno y materia (única por `id_estudiante` + `asignatura`) |
 | `personal_excluido` | 9.729 | Docentes, tutores, coordinadores e invitados (`DOC_`/`STAFF_`), con `motivo_exclusion` |
 | `descartados` | 3 | Filas descartadas (hoy, los pies "Cantidad de filas" de la matrícula) |
-| `informe_calidad_datos` | 92 | Cada problema, filas antes/después, cantidad afectada y decisión |
-| `validaciones` | 11 | Chequeos automáticos del modelo (todos OK) |
+| `informe_calidad_datos` | 91 | Cada problema, filas antes/después, cantidad afectada y decisión |
+| `validaciones` | 10 | Chequeos automáticos del modelo (todos OK) |
 
 Universo: 957 filas = 319 alumnos × 3 materias. Matriculados vigentes: 163 (Álgebra), 165 (Algoritmos) y 164 (Probabilidad).
 
@@ -72,53 +74,82 @@ Universo: 957 filas = 319 alumnos × 3 materias. Matriculados vigentes: 163 (Ál
   alguno, el programa lo registra, deja la fila no usada en `descartados.csv` y aplica el criterio
   `mayor_nota` (supuesto, porque no se sabe si son intentos o correcciones).
 
-## Nota real vs. estimación
+## Cálculo de la nota (criterios confirmados por el docente)
+
+- **Un examen que existe y el alumno no rindió vale 0.** Existe = lo rindió algún otro alumno, es decir, está
+  presente en los datos. El cálculo usa los instrumentos presentes en los datos.
+- **Álgebra:** los archivos faltantes son a propósito (solo hay 3 de los 8 instrumentos, 45 de 120 puntos).
+  Se trabaja con los instrumentos disponibles, proyectando a la escala de 120 puntos. Como alternativa
+  se calcula también la normalización de cada instrumento a 10 (p. ej. 25/25 × 10).
+- **Recuperatorio (Probabilidad, "Evaluación Semanal Nº1"):** si el alumno no tenía nota original, queda el
+  recuperatorio; si la original estaba aprobada, se conserva la original (no debería recuperar); si estaba
+  desaprobada, queda la mejor de las dos. Las filas que no se usan **no se borran**: quedan en `calificaciones`
+  con `usa_en_nota_final = False`.
+  En los datos: 21 alumnos lo rindieron; en 8 no había nota original (queda el recuperatorio), en 5 la
+  original estaba aprobada (se conserva) y en 8 estaba desaprobada, de los cuales 6 mejoraron. En total,
+  14 recuperatorios pasan a ser la nota de la evaluación y 7 no se usan.
+- **Estado definitivo vs. a la fecha:** la cursada no está confirmada como cerrada, así que no se asignan
+  `Regular`/`Libre` definitivos. El semáforo usa el estado "a la fecha" (`estado_provisorio`).
+
+### Columnas de `notas_finales` / `situacion_estudiante`
 
 **Álgebra** (acumulativo, 120 puntos; promociona ≥ 85, regular ≥ 60):
 
 | Columna | Qué es |
 |---|---|
 | `puntos_acumulados` | **Real**: suma de puntos obtenidos |
-| `puntos_maximos_observados` | Puntos posibles de los instrumentos que hay en los datos (hoy 45 de 120) |
-| `completitud_datos` | Instrumentos en los datos / esperados por la consigna (hoy 3/8 = 0,375) |
-| `completitud_alumno` | Instrumentos que rindió el alumno / instrumentos en los datos |
-| `proyeccion_120_rendidos`, `proyeccion_120_observados` | **Estimaciones** (no son nota final) |
-| `estado_provisorio`, `estado_definitivo` | Se calculan **sin usar las proyecciones** |
+| `puntos_maximos_observados` | Puntos posibles de los instrumentos presentes en los datos (hoy 45 de 120) |
+| `proyeccion_120_observados` | **Estimación**: puntos acumulados / 45 × 120 (lo no rendido cuenta 0). Es la `nota_a_la_fecha` |
+| `proyeccion_120_rendidos` | Estimación solo sobre lo que el alumno rindió (informativa) |
+| `promedio_normalizado_10` | Promedio de los instrumentos llevados a 10 (lo no rendido cuenta 0) |
+| `completitud_datos` / `completitud_alumno` | Instrumentos en los datos / esperados (3/8 = 0,375); rendidos / en los datos |
 
-`estado_definitivo` es `Promociona` solo si el alumno ya acumuló ≥ 85 (los puntos no bajan). `Regular` o
-`Libre` solo se asignan si los datos están completos **y** la cursada está cerrada. Hoy no se cumple
-ninguna de las dos condiciones, por lo que los 196 alumnos con notas quedan en **Pendiente** (semáforo gris).
-
-**Probabilidad y Algoritmos** (promedio; el total de instrumentos esperados no figura en la consigna):
+**Probabilidad y Algoritmos** (promedio de instrumentos presentes en los datos):
 
 | Columna | Qué es |
 |---|---|
-| `promedio_observados` | Promedio de lo efectivamente rendido |
-| `promedio_con_faltantes` | Estimación: lo no rendido cuenta 0, dividido por los instrumentos **presentes en los datos** |
-| `denominador_confirmado` | `False` mientras no se confirme el total oficial |
-| `estado_provisorio` | Según `promedio_observados` |
-| `estado_definitivo` | `Pendiente` hasta que la cursada esté cerrada y el total esté confirmado |
+| `promedio_con_faltantes` | Lo no rendido cuenta 0. Es la `nota_a_la_fecha` |
+| `promedio_observados` | Promedio solo de lo rendido (informativo) |
 
-**Sin notas:** los alumnos sin ninguna nota quedan como "Sin notas" (421 casos), nunca como Libre.
+**Comunes:** `nota_a_la_fecha` y `escala_nota_a_la_fecha` (120 en Álgebra, 100 en las demás),
+`rendimiento_observado_pct`, `estado_provisorio` (según `nota_a_la_fecha`), `estado_definitivo`,
+`semaforo` (Verde = Promociona, Amarillo = Regular, Rojo = Libre, "Sin notas") y `semaforo_definitivo`.
 
-## Supuestos pendientes de confirmar con el docente
+`estado_definitivo`: solo es `Promociona` en Álgebra si ya hay ≥ 85 puntos acumulados **reales** (no bajan).
+El resto queda `Pendiente` hasta ejecutar con `--cursada-cerrada`.
 
-| # | Tema | Supuesto actual | Cómo se cambia |
-|---|---|---|---|
-| 1 | Álgebra: solo hay 3 de los 8 instrumentos (45 de 120 pts) | Se trabaja con lo disponible; estados `Pendiente` | Al recibir los archivos faltantes, agregarlos a `data/raw/algebra/` |
-| 2 | Lo no rendido en Probabilidad y Algoritmos | Se informan ambos promedios; el estado provisorio usa lo rendido | `denominador_confirmado` / `REGLAS[...]["instrumentos_esperados"]` |
-| 3 | Recuperatorio de Probabilidad | Reemplaza a la original. De los 21 alumnos que lo rindieron: 7 mejoran, 6 empeoran y 8 no tenían nota original | `--recuperatorio` o `RECUPERATORIO_MODO` |
-| 4 | No matriculados con actividad (332 en total) | Se conservan y se marcan en `situacion_matricula`; los KPIs de rendimiento se calculan con `matriculado = True` | Filtro en 6.2 |
-| 5 | ¿Está cerrada la cursada? | No (`CURSADA_CERRADA = False`) | `--cursada-cerrada` |
+**Sin notas:** los alumnos sin ninguna nota quedan como "Sin notas" (421 casos; 21 en Álgebra, 58 en Algoritmos y
+22 en Probabilidad entre los matriculados), nunca como Libre.
+
+### Distribución del estado a la fecha (solo matriculados)
+
+| Asignatura | Promociona | Regular | Libre | Sin notas |
+|---|---:|---:|---:|---:|
+| Álgebra | 100 | 18 | 24 | 21 |
+| Algoritmos y Estructuras de Datos | 18 | 35 | 54 | 58 |
+| Probabilidad y Estadística | 19 | 59 | 64 | 22 |
+
+## Decisiones
+
+| # | Tema | Estado |
+|---|---|---|
+| 1 | Álgebra: faltan instrumentos | **Confirmado**: es a propósito; se trabaja con lo disponible (proyección a 120 y/o normalización a 10) |
+| 2 | Lo no rendido en Probabilidad y Algoritmos | **Confirmado**: si el examen existe y el alumno no lo rindió, vale 0 |
+| 3 | Recuperatorio de Probabilidad | **Confirmado**: regla del docente (ver arriba) |
+| 4 | No matriculados con actividad (332 en total) | **Confirmado**: se conservan y se marcan en `situacion_matricula`; los KPIs de rendimiento usan `matriculado = True` |
+| 5 | Definición de "activo" (KPI activos vs. inactivos) | **Confirmado**: al menos una interacción hasta la fecha de corte |
+| 6 | ¿Está cerrada la cursada? | **Pendiente**: hasta confirmarlo (`CURSADA_CERRADA = False`) los estados Regular/Libre no son definitivos |
+| 7 | Alumno matriculado sin ninguna nota | **Pendiente**: se informa como "Sin notas" (no como Libre) para no confundir "no rindió nada" con un resultado de evaluación; por la regla de los 0 podría corresponder Libre |
 
 ## Validaciones y pruebas
 
 El programa se detiene si falla alguna de estas validaciones (todas OK en la corrida): `situacion_estudiante`
 única por `id_estudiante` + `asignatura`; los merges no multiplican filas (957 = 957); notas dentro de
-rango; "Sin notas" no termina como Libre; Álgebra con datos incompletos no tiene Regular/Libre definitivo;
-el personal excluido no incluye alumnos matriculados.
+rango; "Sin notas" no termina como Libre; con la cursada abierta no hay Regular/Libre definitivos ni
+Promociona sin puntos reales suficientes; el personal excluido no incluye alumnos matriculados.
 
-`tests/test_etl_6_1.py` (39 pruebas) cubre: baja posterior a una inscripción y reinscripción; umbrales de las
-tres materias; Álgebra sin proyección como nota definitiva; alumno sin notas; recuperatorio en sus tres
-modos; duplicados de trazabilidad y de notas; separación de personal; matriculado sin actividad y actividad
-sin matrícula; detección de archivos (faltantes, duplicados, tildes).
+`tests/test_etl_6_1.py` (43 pruebas) cubre: baja posterior a una inscripción y reinscripción; umbrales de las
+tres materias; Álgebra (estimación vs. real, faltantes en 0, normalización a 10); alumno sin notas; lo no
+rendido como 0; recuperatorio (regla del docente y los otros modos); duplicados de trazabilidad y de notas;
+separación de personal; matriculado sin actividad y actividad sin matrícula; detección de archivos
+(faltantes, duplicados, tildes).

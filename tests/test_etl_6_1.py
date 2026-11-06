@@ -96,16 +96,34 @@ def _alg(puntos_por_alumno):
     return pd.DataFrame(filas)
 
 
-def test_algebra_la_proyeccion_no_es_nota_definitiva():
-    # saca 45/45 en lo que hay (3 de 8 instrumentos): proyecta 120 pero NO está promocionado
+def test_algebra_la_proyeccion_es_una_estimacion_y_no_define_el_estado_definitivo():
+    # saca 45/45 en lo que hay (3 de 8 instrumentos): proyecta 120, pero lo REAL son 45 puntos
     cal = _alg({"ALU_0010": [(10, 10), (10, 10), (25, 25)]})
     n = etl.calcular_notas_finales(cal, universo(("ALU_0010", ALG)))
     f = fila(n, "ALU_0010", ALG)
     assert f["puntos_acumulados"] == 45 and f["puntos_maximos_observados"] == 45
     assert f["proyeccion_120_rendidos"] == 120 and f["proyeccion_120_observados"] == 120
-    assert f["estado_definitivo"] == "Pendiente"
-    assert f["estado_provisorio"] == "Pendiente"          # tampoco el provisorio sale de la proyección
+    assert f["nota_a_la_fecha"] == 120 and f["escala_nota_a_la_fecha"] == 120
+    assert f["estado_provisorio"] == "Promociona"         # semáforo "a la fecha", con la estimación
+    assert f["estado_definitivo"] == "Pendiente"          # pero NO es definitivo
     assert f["completitud_datos"] == pytest.approx(3 / 8)
+
+
+def test_algebra_lo_no_rendido_de_un_examen_existente_vale_cero():
+    # el docente: si el examen existe y el alumno no lo rindió, es 0
+    cal = _alg({"ALU_0013": [(10, 10), (10, 10), (25, 25)], "ALU_0014": [(10, 10)]})
+    n = etl.calcular_notas_finales(cal, universo(("ALU_0013", ALG), ("ALU_0014", ALG)))
+    f = fila(n, "ALU_0014", ALG)
+    assert f["puntos_acumulados"] == 10
+    assert f["proyeccion_120_observados"] == pytest.approx(10 / 45 * 120, abs=0.01)   # faltantes = 0
+    assert f["proyeccion_120_rendidos"] == 120                                       # solo sobre lo rendido
+    assert f["estado_provisorio"] == "Libre"
+
+
+def test_algebra_normalizacion_a_10_por_instrumento():
+    cal = _alg({"ALU_0015": [(25, 25), (5, 10)]})                  # 25/25*10 = 10 ; 5/10*10 = 5
+    f = fila(etl.calcular_notas_finales(cal, universo(("ALU_0015", ALG))), "ALU_0015", ALG)
+    assert f["promedio_normalizado_10"] == 7.5
 
 
 def test_algebra_promociona_si_los_puntos_acumulados_ya_alcanzan_85():
@@ -115,7 +133,7 @@ def test_algebra_promociona_si_los_puntos_acumulados_ya_alcanzan_85():
     assert f["estado_definitivo"] == "Promociona"         # los puntos no pueden bajar
 
 
-def test_algebra_regular_y_libre_solo_son_definitivos_con_cursada_cerrada_y_datos_completos():
+def test_algebra_regular_y_libre_solo_son_definitivos_con_cursada_cerrada():
     cal = _alg({"ALU_0012": [(20, 25), (20, 25)] + [(5, 10)] * 5 + [(0, 20)]})   # 8 instrumentos, 65 pts
     u = universo(("ALU_0012", ALG))
     abierta = fila(etl.calcular_notas_finales(cal, u, cursada_cerrada=False), "ALU_0012", ALG)
@@ -145,15 +163,27 @@ def test_promedio_observado_y_con_faltantes_son_distintos_y_explicitos():
     a = fila(n, "ALU_0030", PROB)
     assert a["promedio_observados"] == 100
     assert a["promedio_con_faltantes"] == 50               # 200 / 4 instrumentos presentes en los datos
-    assert not a["denominador_confirmado"]                 # el total oficial NO está confirmado
-    assert a["estado_definitivo"] == "Pendiente"           # no se promociona por un supuesto
+    assert a["denominador_confirmado"]                     # confirmado: instrumentos presentes en los datos
+    assert a["estado_definitivo"] == "Pendiente"           # la cursada sigue abierta: no hay estado definitivo
 
 
-def test_estado_provisorio_de_probabilidad_usa_solo_lo_rendido():
-    cal = pd.DataFrame([nota("ALU_0032", PROB, "PARCIAL 1", 90, 100), nota("ALU_0033", PROB, "PARCIAL 1", 10, 100)])
+def test_lo_no_rendido_de_un_examen_existente_cuenta_cero_en_el_estado():
+    # A rindió los dos exámenes; B rindió solo uno, pero el otro existe (lo rindió A) -> en el otro tiene 0
+    cal = pd.DataFrame([nota("ALU_0032", PROB, "PARCIAL 1", 100, 100), nota("ALU_0032", PROB, "Actividad 1", 100, 100),
+                        nota("ALU_0033", PROB, "PARCIAL 1", 100, 100)])
     n = etl.calcular_notas_finales(cal, universo(("ALU_0032", PROB), ("ALU_0033", PROB)))
+    b = fila(n, "ALU_0033", PROB)
+    assert b["promedio_observados"] == 100 and b["promedio_con_faltantes"] == 50
+    assert b["nota_a_la_fecha"] == 50 and b["estado_provisorio"] == "Libre"
     assert fila(n, "ALU_0032", PROB)["estado_provisorio"] == "Promociona"
-    assert fila(n, "ALU_0033", PROB)["estado_provisorio"] == "Libre"
+
+
+def test_con_la_cursada_cerrada_el_estado_definitivo_sale_del_promedio_con_faltantes():
+    cal = pd.DataFrame([nota("ALU_0034", PROB, "PARCIAL 1", 100, 100), nota("ALU_0034", PROB, "Actividad 1", 100, 100),
+                        nota("ALU_0035", PROB, "PARCIAL 1", 100, 100), nota("ALU_0035", PROB, "Actividad 1", 30, 100)])
+    n = etl.calcular_notas_finales(cal, universo(("ALU_0034", PROB), ("ALU_0035", PROB)), cursada_cerrada=True)
+    assert fila(n, "ALU_0034", PROB)["estado_definitivo"] == "Promociona"
+    assert fila(n, "ALU_0035", PROB)["estado_definitivo"] == "Regular"     # (100+30)/2 = 65
 
 
 # ----------------------------------------------------------------------------- recuperatorios
@@ -166,6 +196,31 @@ def _prob_con_recuperatorio():
         nota("ALU_0042", PROB, "Evaluación Semanal Nº1", 70, 100),
         nota("ALU_0040", PROB, "Evaluación Semanal Nº2", 100, 100),
     ])
+
+
+def _usadas(c, id_):
+    return c[c["usa_en_nota_final"] & (c["id_estudiante"] == id_)]
+
+
+def test_recuperatorio_regla_del_docente_por_defecto():
+    base = _prob_con_recuperatorio()
+    extra = pd.DataFrame([
+        nota("ALU_0044", PROB, "Evaluación Semanal Nº1", 56.25, 100),                       # desaprobada, recup peor
+        nota("ALU_0044", PROB, "Recuperatorio: Evaluación Semanal Nº1", 0, 100, True),
+        nota("ALU_0045", PROB, "Evaluación Semanal Nº1", 75, 100),                          # aprobada, recup mejor
+        nota("ALU_0045", PROB, "Recuperatorio: Evaluación Semanal Nº1", 77.78, 100, True),
+        nota("ALU_0046", PROB, "Recuperatorio: Evaluación Semanal Nº1", 77.78, 100, True),  # sin nota original
+    ])
+    c = etl.aplicar_recuperatorios(pd.concat([base, extra], ignore_index=True))   # modo por defecto = docente
+    assert list(_usadas(c, "ALU_0040").query("instrumento_base == 'Evaluación Semanal Nº1'")["nota_100"]) == [83.33]  # tenía 0 -> queda el 83.33
+    assert list(_usadas(c, "ALU_0041")["nota_100"]) == [90.0]       # aprobada: no se reemplaza (aunque el recup sea peor)
+    assert list(_usadas(c, "ALU_0042")["nota_100"]) == [70.0]       # no rindió recuperatorio
+    assert list(_usadas(c, "ALU_0044")["nota_100"]) == [56.25]      # desaprobada y el recup es peor: queda la mejor
+    assert list(_usadas(c, "ALU_0045")["nota_100"]) == [75.0]       # aprobada: se conserva la original
+    assert list(_usadas(c, "ALU_0046")["nota_100"]) == [77.78]      # sin nada antes: queda el recuperatorio
+    # las filas no usadas NO se borran
+    assert len(c) == len(base) + len(extra)
+    assert not c.loc[(c["id_estudiante"] == "ALU_0041") & c["es_recuperatorio"], "usa_en_nota_final"].iloc[0]
 
 
 def test_recuperatorio_reemplaza_a_la_evaluacion_original():
