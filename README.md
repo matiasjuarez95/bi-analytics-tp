@@ -147,3 +147,19 @@ git push -u origin matias
 ```
 
 Por último, abrir un **PR de `matias` hacia `main`**, solicitar revisión y fusionarlo cuando esté aprobado.
+
+## Estructura inicial del proyecto
+
+| Ruta | Propósito |
+| --- | --- |
+| `data/raw/` | Fuentes `.xlsx` originales (Drive, no modificadas) |
+| `data/interim/` | Resultados temporales de las transformaciones |
+| `data/processed/` | Tablas limpias y modeladas para los dashboards |
+| `src/etl/` | Código de integración, limpieza y validación |
+| `dashboards/` | Aplicación y vistas interactivas |
+| `notebooks/` | Análisis exploratorio de los datos |
+| `tests/` | Pruebas de reglas de negocio e integridad |
+| `docs/` | Consigna, inventario y decisiones técnicas |
+| `reports/` | Informe de avance y entrega final |
+
+**Datos:** el proyecto utiliza directamente **26 archivos Excel** de la [carpeta compartida de Drive](https://drive.google.com/drive/folders/1uOrWfHv7u-Sr4mhMpFOuWJr7FNXec7lA). Por ahora no se suben los binarios al repositorio: ver [instrucciones para descargarlos](data/raw/README.md) y [fuentes y decisiones](docs/fuentes_y_decisiones.md). No hace falta convertirlos a CSV.
