@@ -321,6 +321,19 @@ def test_modelo_situacion_una_fila_por_alumno_y_asignatura_sin_multiplicar():
     assert len(sit) == 3 and not sit.duplicated(["id_estudiante", "asignatura"]).any()
     assert fila(sit, "ALU_0080", ALG)["situacion_matricula"] == "Matriculado sin participación"
     assert fila(sit, "ALU_0081", PROB)["situacion_matricula"] == "NO matriculado con actividad"
+    # "Sin notas" debe conservar una etiqueta, no un booleano.
+    assert fila(sit, "ALU_0080", ALG)["semaforo_definitivo"] == "Sin notas"
+    assert not bool(fila(sit, "ALU_0080", ALG)["tiene_estado_definitivo"])
+    # Con cursada abierta, una nota insuficiente no es estado definitivo.
+    assert fila(sit, "ALU_0081", PROB)["semaforo_definitivo"] == "Gris (pendiente)"
+    assert not bool(fila(sit, "ALU_0081", PROB)["tiene_estado_definitivo"])
+
+
+def test_semaforo_definitivo_usa_colores_y_bandera_separada():
+    estados = ["Promociona", "Regular", "Libre", "Pendiente", "Sin notas"]
+    esperados = ["Verde", "Amarillo", "Rojo", "Gris (pendiente)", "Sin notas"]
+    assert [etl._SEMAFORO[estado] for estado in estados] == esperados
+    assert [estado in etl.ESTADOS_DEFINIDOS for estado in estados] == [True, True, True, False, False]
 
 
 # ----------------------------------------------------------------------------- detección de archivos
