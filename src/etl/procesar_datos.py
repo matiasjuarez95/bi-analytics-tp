@@ -625,7 +625,8 @@ def construir_situacion(universo, mat, par, eventos, notas):
     sit["tiene_notas"] = sit["instrumentos_rendidos"].fillna(0) > 0
     sit["situacion_matricula"] = clasificar_situacion_matricula(sit["matriculado"], sit["tiene_actividad"])
     sit["semaforo"] = sit["estado_provisorio"].map(_SEMAFORO)
-    sit["semaforo_definitivo"] = sit["estado_definitivo"].isin(ESTADOS_DEFINIDOS)
+    sit["semaforo_definitivo"] = sit["estado_definitivo"].map(_SEMAFORO)
+    sit["tiene_estado_definitivo"] = sit["estado_definitivo"].isin(ESTADOS_DEFINIDOS)
     return sit
 
 
