@@ -88,8 +88,9 @@ Universo: 957 filas = 319 alumnos × 3 materias. Matriculados vigentes: 163 (Ál
   En los datos: 21 alumnos lo rindieron; en 8 no había nota original (queda el recuperatorio), en 5 la
   original estaba aprobada (se conserva) y en 8 estaba desaprobada, de los cuales 6 mejoraron. En total,
   14 recuperatorios pasan a ser la nota de la evaluación y 7 no se usan.
-- **Estado definitivo vs. a la fecha:** la cursada no está confirmada como cerrada, así que no se asignan
-  `Regular`/`Libre` definitivos. El semáforo usa el estado "a la fecha" (`estado_provisorio`).
+- **Estado definitivo vs. a la fecha:** el docente confirmó que los datos son una foto al 24/10 y que la cursada
+  aún no estaba finalizada, así que no se asignan `Regular`/`Libre` definitivos. El semáforo usa el estado
+  "a la fecha" (`estado_provisorio`).
 
 ### Columnas de `notas_finales` / `situacion_estudiante`
 
@@ -116,10 +117,12 @@ Universo: 957 filas = 319 alumnos × 3 materias. Matriculados vigentes: 163 (Ál
 `semaforo` (Verde = Promociona, Amarillo = Regular, Rojo = Libre, "Sin notas") y `semaforo_definitivo`.
 
 `estado_definitivo`: solo es `Promociona` en Álgebra si ya hay ≥ 85 puntos acumulados **reales** (no bajan).
-El resto queda `Pendiente` hasta ejecutar con `--cursada-cerrada`.
+El resto queda `Pendiente` porque la cursada no había finalizado; se calcularía con `--cursada-cerrada` cuando
+se disponga de los datos finales.
 
 **Sin notas:** los alumnos sin ninguna nota quedan como "Sin notas" (421 casos; 21 en Álgebra, 58 en Algoritmos y
-22 en Probabilidad entre los matriculados), nunca como Libre.
+22 en Probabilidad entre los matriculados), nunca como Libre. El docente confirmó este criterio: conviene
+dejarlos como "sin calificaciones" (o "abandonó") y no perjudicarlos con un Libre.
 
 ### Distribución del estado a la fecha (solo matriculados)
 
@@ -138,8 +141,10 @@ El resto queda `Pendiente` hasta ejecutar con `--cursada-cerrada`.
 | 3 | Recuperatorio de Probabilidad | **Confirmado**: regla del docente (ver arriba) |
 | 4 | No matriculados con actividad (332 en total) | **Confirmado**: se conservan y se marcan en `situacion_matricula`; los KPIs de rendimiento usan `matriculado = True` |
 | 5 | Definición de "activo" (KPI activos vs. inactivos) | **Confirmado**: al menos una interacción hasta la fecha de corte |
-| 6 | ¿Está cerrada la cursada? | **Pendiente**: hasta confirmarlo (`CURSADA_CERRADA = False`) los estados Regular/Libre no son definitivos |
-| 7 | Alumno matriculado sin ninguna nota | **Pendiente**: se informa como "Sin notas" (no como Libre) para no confundir "no rindió nada" con un resultado de evaluación; por la regla de los 0 podría corresponder Libre |
+| 6 | ¿Está cerrada la cursada? | **Confirmado**: los datos son una foto al 24/10 y la cursada no estaba finalizada (`CURSADA_CERRADA = False`): los estados Regular/Libre son "a la fecha", no definitivos |
+| 7 | Alumno matriculado sin ninguna nota | **Confirmado**: se informa como "Sin notas" (no como Libre), para no perjudicarlo con un resultado de evaluación |
+
+No quedan decisiones pendientes de confirmar con el docente.
 
 ## Validaciones y pruebas
 

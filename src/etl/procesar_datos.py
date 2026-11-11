@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 # =====================================================================================
-# CONFIGURACIÓN (reglas de la consigna y supuestos pendientes de confirmar con el docente)
+# CONFIGURACIÓN (reglas de la consigna y decisiones confirmadas con el docente)
 # =====================================================================================
 ASIGNATURAS = ["Álgebra", "Algoritmos y Estructuras de Datos", "Probabilidad y Estadística"]
 
@@ -60,7 +60,9 @@ REGLAS = {
 #  - Álgebra: se trabaja con los instrumentos disponibles (los faltantes son a propósito, confirmado).
 #  - Recuperatorio (confirmado): sin nota original queda el recuperatorio; con original aprobada se conserva
 #    la original (no debería recuperar); con original desaprobada queda la mejor de las dos.
-CURSADA_CERRADA = False          # SIN CONFIRMAR: mientras sea False, ningún estado Regular/Libre es definitivo
+#  - Cursada (confirmado): los datos son una foto al 24/10 y la cursada aún no había finalizado.
+#  - Matriculados sin ninguna nota (confirmado): quedan como "Sin notas", no como Libre.
+CURSADA_CERRADA = False          # mientras sea False, ningún estado Regular/Libre es definitivo
 RECUPERATORIO_MODO = "docente"   # "docente" | "mayor_nota" | "reemplaza" | "aparte"
 NOTAS_DUPLICADAS_CRITERIO = "mayor_nota"  # solo se aplica si aparecen duplicados (hoy hay 0; supuesto)
 
