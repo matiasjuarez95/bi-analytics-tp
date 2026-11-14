@@ -3,7 +3,7 @@ Seguimiento académico LMS - Dashboard (TFI Business Intelligence & Analytics)
 Lee SOLO las tablas que generan el ETL (6.1) y los KPI (6.2); no calcula nada nuevo.
 
 Ejecutar desde la raíz del repo:
-    python -m streamlit run dashboards/app_tatiana.py
+    python -m streamlit run dashboards/app_TFI.py
 """
 from pathlib import Path
 
