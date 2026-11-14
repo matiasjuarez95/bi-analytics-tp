@@ -105,6 +105,10 @@ diaria = tabla("kpi_actividad_diaria")
 mapa = tabla("kpi_mapa_calor")
 instrumentos = tabla("kpi_notas_instrumento")
 trazabilidad = cargar_trazabilidad(str(PROC / "trazabilidad.csv"))
+# Solo estudiantes con matrícula vigente (mismo criterio que src/kpi.py).
+# kpi_relacion_estudiante ya contiene únicamente matriculados.
+matriculados = relacion[["id_estudiante", "asignatura"]].drop_duplicates()
+trazabilidad = trazabilidad.merge(matriculados, on=["id_estudiante", "asignatura"], how="inner")
 
 
 # -------------------------------------------------------------
@@ -140,14 +144,17 @@ st.markdown('<p class="sub-title">Participación, trazabilidad y rendimiento de 
 
 matric = int(res["matriculados"].sum())
 activos = int(res["activos"].sum())
-nota_media = (res["promedio_nota_pct_solo_con_notas"] * res["con_notas"]).sum() / max(res["con_notas"].sum(), 1)
+total_con_notas = res["con_notas"].sum()
+nota_media = ((res["promedio_nota_pct_solo_con_notas"] * res["con_notas"]).sum() / total_con_notas
+              if total_con_notas > 0 else None)
 sin_part = int(ale.loc[ale["alerta"] == "Matriculado sin participación", "cantidad"].sum())
 no_mat = int(ale.loc[ale["alerta"] == "No matriculado con actividad", "cantidad"].sum())
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Matriculados", f"{matric:,}".replace(",", "."))
 c2.metric("Activos", f"{activos / matric * 100:.1f}%" if matric else "-", f"{activos} de {matric}")
-c3.metric("Nota media (%)", f"{nota_media:.1f}", "solo alumnos con notas")
+c3.metric("Nota media (%)", "Sin datos" if nota_media is None else f"{nota_media:.1f}",
+          None if nota_media is None else "solo alumnos con notas")
 c4.metric("Alertas de matrícula", f"{sin_part + no_mat}",
           f"{sin_part} sin participar · {no_mat} no matric.", delta_color="off")
 st.write("")
@@ -217,10 +224,10 @@ with t_par:
     f.update_layout(template="plotly_white")
     st.plotly_chart(f, use_container_width=True)
     st.subheader("Evolución de accesos")
-    tr_rango = trazabilidad[(trazabilidad["asignatura"].isin(materias)) &
-                            (trazabilidad["fecha"].dt.date >= rango[0]) &
-                            (trazabilidad["fecha"].dt.date <= rango[1]) &
-                            (trazabilidad["tipo_interaccion"] == "Acceso/navegación")]
+    tr_periodo = trazabilidad[(trazabilidad["asignatura"].isin(materias)) &
+                              (trazabilidad["fecha"].dt.date >= rango[0]) &
+                              (trazabilidad["fecha"].dt.date <= rango[1])]
+    tr_rango = tr_periodo[tr_periodo["tipo_interaccion"] == "Acceso/navegación"]
     accesos = tr_rango.assign(dia=tr_rango["fecha"].dt.floor("D")).groupby(
         ["dia", "asignatura"], as_index=False).size().rename(columns={"size": "accesos"})
     f = px.line(accesos, x="dia", y="accesos", color="asignatura", markers=True,
@@ -232,11 +239,13 @@ with t_par:
     ids_det = sorted(relacion.loc[relacion["asignatura"] == asig_det, "id_estudiante"].dropna().unique())
     if ids_det:
         alumno_det = st.selectbox("Estudiante:", ids_det, key="participacion_alumno")
-        detalle = tr_rango[(tr_rango["asignatura"] == asig_det) &
-                           (tr_rango["id_estudiante"] == alumno_det)]
+        detalle = tr_periodo[(tr_periodo["asignatura"] == asig_det) &
+                             (tr_periodo["id_estudiante"] == alumno_det)]
         serie = detalle.assign(dia=detalle["fecha"].dt.floor("D")).groupby(
-            "dia", as_index=False).size().rename(columns={"size": "eventos"})
-        f = px.bar(serie, x="dia", y="eventos", title=f"Eventos por día · {alumno_det}")
+            ["dia", "tipo_interaccion"], as_index=False).size().rename(columns={"size": "eventos"})
+        f = px.bar(serie, x="dia", y="eventos", color="tipo_interaccion",
+                   color_discrete_map=COLOR_TIPOS,
+                   title=f"Eventos por día y tipo · {alumno_det}")
         f.update_layout(template="plotly_white")
         st.plotly_chart(f, use_container_width=True)
     else:
