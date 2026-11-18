@@ -6,18 +6,42 @@ Aplicación interactiva de Streamlit para explorar participación, trazabilidad 
 
 `dashboards/app_TFI.py`
 
-## Cómo ejecutarlo
+## Ejecución integrada (local)
 
 Desde la raíz del repositorio:
 
 ```bash
-pip install -r requirements.txt
-python -m src.etl.procesar_datos data/raw data/processed
-python -m src.kpi data/processed data/processed/kpi
+python -m pip install -r requirements.txt
 python -m streamlit run dashboards/app_TFI.py
 ```
 
-Se necesitan los archivos originales en `data/raw/`. Los datos procesados deben estar disponibles en `data/processed/`. Si falta una tabla KPI, la aplicación indica qué proceso ejecutar.
+La aplicación incluye una página **Administración de datos** accesible desde la navegación de Streamlit. Se puede abrir incluso cuando todavía no existen KPI calculados.
+
+1. Guardá los Excel originales en `data/raw/`, respetando la estructura que espera el ETL.
+2. Abrí **Administración de datos** y presioná **Actualizar datos**.
+3. La aplicación ejecutará ETL 6.1 → validaciones → KPI 6.2 → validaciones.
+4. Regresá a la página principal y consultá los siete dashboards, incluidos los filtros de fecha de corte y grupos de riesgo.
+
+Los datos se leen localmente de `data/processed/`. La aplicación no descarga fuentes desde Drive ni recalcula los indicadores al abrir un gráfico.
+
+### Alternativa por terminal
+
+El orquestador ofrece un único comando para regenerar ETL y KPI:
+
+```bash
+python -m src.pipeline
+```
+
+También admite `--raw data/raw --processed data/processed`. Los comandos individuales del ETL y los KPI se conservan para desarrollo y depuración.
+
+### Integridad y seguridad
+
+- Las etapas procesan archivos en una carpeta temporal y solo publican las salidas al terminar correctamente. Si falla la ejecución, se mantienen los resultados anteriores.
+- La fecha UTC y las filas por tabla de la última actualización exitosa se registran en `data/processed/ultima_actualizacion.json`.
+- Un bloqueo local en `data/.pipeline.lock` evita ejecutar dos actualizaciones simultáneas. Tras una interrupción abrupta se debe verificar que no haya otra ejecución antes de quitarlo manualmente.
+- **Administración está diseñada para uso local de confianza**. No exponerla a internet sin autenticación y autorización.
+- No subir Excel ni CSV con información de alumnos al repositorio.
+- Para cargar datos se necesitan los Excel de origen y permisos de escritura en `data/processed/`.
 
 ## Vistas del dashboard
 
