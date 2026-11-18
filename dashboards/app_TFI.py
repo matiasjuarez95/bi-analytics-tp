@@ -99,10 +99,7 @@ estados = tabla("kpi_estados_a_la_fecha")
 alertas = tabla("kpi_alertas_matricula")
 hist = tabla("kpi_histograma_notas")
 relacion = tabla("kpi_relacion_estudiante")
-tipos = tabla("kpi_interacciones_tipo")
-semanal = tabla("kpi_actividad_semanal")
 diaria = tabla("kpi_actividad_diaria")
-mapa = tabla("kpi_mapa_calor")
 instrumentos = tabla("kpi_notas_instrumento")
 trazabilidad = cargar_trazabilidad(str(PROC / "trazabilidad.csv"))
 # Solo estudiantes con matrícula vigente (mismo criterio que src/kpi.py).
@@ -213,13 +210,24 @@ with t_gen:
         f.update_layout(template="plotly_white")
         st.plotly_chart(f, use_container_width=True)
     with g2:
-        a = filtrar(semanal).copy()
-        a = a[pd.to_datetime(a["semana_inicio"]) < corte]
-        f = px.line(a, x="semana_inicio", y="eventos", color="asignatura",
-                    labels={"semana_inicio": "Semana", "eventos": "Eventos", "asignatura": "Asignatura"},
-                    title="Actividad semanal (eventos del LMS)")
-        f.update_layout(template="plotly_white")
-        st.plotly_chart(f, use_container_width=True)
+        # Se arma desde la trazabilidad (no desde kpi_actividad_semanal) para que
+        # incluya solo eventos hasta el día de corte, aunque caiga a mitad de semana.
+        a = filtrar(traz_corte)
+        dia = a["fecha"].dt.normalize()
+        a = (a.assign(semana_inicio=dia - pd.to_timedelta(dia.dt.dayofweek, unit="D"))
+             .groupby(["asignatura", "semana_inicio"], as_index=False).size()
+             .rename(columns={"size": "eventos"}))
+        if a.empty:
+            st.info("No hay actividad registrada hasta la fecha de corte.")
+        else:
+            f = px.line(a, x="semana_inicio", y="eventos", color="asignatura",
+                        labels={"semana_inicio": "Semana (inicio lunes)", "eventos": "Eventos",
+                                "asignatura": "Asignatura"},
+                        title="Actividad semanal (eventos del LMS)")
+            f.update_layout(template="plotly_white")
+            st.plotly_chart(f, use_container_width=True)
+            if fecha_corte.weekday() != 6:
+                st.caption("La última semana está incompleta: solo incluye eventos hasta la fecha de corte.")
     st.subheader("Actividad reciente de los estudiantes")
     st.caption(f"Situación de cada matriculado al {fecha_corte:%d/%m/%Y}: **activo reciente** si ingresó "
                f"en los últimos {dias_recientes} días, **sin actividad reciente** si ingresó antes pero "
@@ -265,35 +273,67 @@ with t_par:
     p1, p2 = st.columns(2)
     with p1:
         f = px.bar(res, x="asignatura", y="tiempo_uso_promedio_min_por_matriculado",
+                   labels={"asignatura": "Asignatura",
+                           "tiempo_uso_promedio_min_por_matriculado": "Minutos por matriculado"},
                    title="Tiempo de uso promedio por matriculado (min)")
         f.update_layout(template="plotly_white")
         st.plotly_chart(f, use_container_width=True)
+        st.caption("⚠️ Acumulado de todo el período (hasta el 24/10): el reporte de participación "
+                   "del LMS trae el tiempo total de cada alumno sin fechas, por lo que no puede "
+                   "recortarse a la fecha de corte.")
     with p2:
-        f = px.bar(res, x="asignatura", y="cobertura_participacion_pct",
-                   title="Cobertura de participación (% de matriculados activos)")
+        cob = actividad_corte.assign(
+            con_actividad=actividad_corte["situacion"] != "Sin actividad",
+            reciente=actividad_corte["situacion"] == "Activo reciente").groupby(
+            "asignatura", as_index=False)[["con_actividad", "reciente"]].mean()
+        cob = cob.melt(id_vars="asignatura", var_name="medida", value_name="pct")
+        cob["pct"] = cob["pct"] * 100
+        cob["medida"] = cob["medida"].map({"con_actividad": "Con actividad hasta el corte",
+                                           "reciente": f"Activos últimos {dias_recientes} días"})
+        f = px.bar(cob, x="asignatura", y="pct", color="medida", barmode="group",
+                   color_discrete_sequence=["#4F7892", "#6FA6A1"],
+                   labels={"asignatura": "Asignatura", "pct": "% de matriculados", "medida": ""},
+                   title="Cobertura de participación (% de matriculados)")
         f.update_layout(template="plotly_white", yaxis_range=[0, 100])
         st.plotly_chart(f, use_container_width=True)
+        st.caption(f"Calculado a la fecha de corte ({fecha_corte:%d/%m/%Y}) desde la trazabilidad.")
+
     d = filtrar(diaria).copy()
     d["dia"] = pd.to_datetime(d["dia"])
     d = d[d["dia"] < corte]
-    rango = st.slider("Rango de fechas:", d["dia"].min().date(), d["dia"].max().date(),
-                      (d["dia"].min().date(), d["dia"].max().date()))
-    d = d[(d["dia"].dt.date >= rango[0]) & (d["dia"].dt.date <= rango[1])]
-    f = px.line(d, x="dia", y="estudiantes_activos", color="asignatura",
-                title="Estudiantes activos por día")
-    f.update_layout(template="plotly_white")
-    st.plotly_chart(f, use_container_width=True)
-    st.subheader("Evolución de accesos")
-    tr_periodo = trazabilidad[(trazabilidad["asignatura"].isin(materias)) &
-                              (trazabilidad["fecha"].dt.date >= rango[0]) &
-                              (trazabilidad["fecha"].dt.date <= rango[1])]
-    tr_rango = tr_periodo[tr_periodo["tipo_interaccion"] == "Acceso/navegación"]
-    accesos = tr_rango.assign(dia=tr_rango["fecha"].dt.floor("D")).groupby(
-        ["dia", "asignatura"], as_index=False).size().rename(columns={"size": "accesos"})
-    f = px.line(accesos, x="dia", y="accesos", color="asignatura", markers=True,
-                title="Accesos/navegación por día")
-    f.update_layout(template="plotly_white")
-    st.plotly_chart(f, use_container_width=True)
+    if d.empty:
+        # Puede pasar si la primera actividad de las materias elegidas es posterior al corte.
+        st.info("No hay actividad en el período: las asignaturas seleccionadas no registran "
+                "eventos hasta la fecha de corte.")
+        tr_periodo = trazabilidad.iloc[0:0]
+    else:
+        dia_min, dia_max = d["dia"].min().date(), d["dia"].max().date()
+        if dia_min < dia_max:
+            rango = st.slider("Rango de fechas:", dia_min, dia_max, (dia_min, dia_max),
+                              format="DD/MM/YYYY")
+        else:
+            # Con un solo día de datos no se puede armar un rango deslizable.
+            rango = (dia_min, dia_max)
+            st.caption(f"Hay actividad en un solo día ({dia_min:%d/%m/%Y}) hasta la fecha de corte.")
+        d = d[(d["dia"].dt.date >= rango[0]) & (d["dia"].dt.date <= rango[1])]
+        f = px.line(d, x="dia", y="estudiantes_activos", color="asignatura",
+                    labels={"dia": "Día", "estudiantes_activos": "Estudiantes activos",
+                            "asignatura": "Asignatura"},
+                    title="Estudiantes activos por día")
+        f.update_layout(template="plotly_white")
+        st.plotly_chart(f, use_container_width=True)
+        st.subheader("Evolución de accesos")
+        tr_periodo = trazabilidad[(trazabilidad["asignatura"].isin(materias)) &
+                                  (trazabilidad["fecha"].dt.date >= rango[0]) &
+                                  (trazabilidad["fecha"].dt.date <= rango[1])]
+        tr_rango = tr_periodo[tr_periodo["tipo_interaccion"] == "Acceso/navegación"]
+        accesos = tr_rango.assign(dia=tr_rango["fecha"].dt.floor("D")).groupby(
+            ["dia", "asignatura"], as_index=False).size().rename(columns={"size": "accesos"})
+        f = px.line(accesos, x="dia", y="accesos", color="asignatura", markers=True,
+                    labels={"dia": "Día", "accesos": "Accesos", "asignatura": "Asignatura"},
+                    title="Accesos/navegación por día")
+        f.update_layout(template="plotly_white")
+        st.plotly_chart(f, use_container_width=True)
     st.subheader("Actividad por estudiante")
     asig_det = st.selectbox("Asignatura para consultar:", materias, key="participacion_asig")
     ids_det = sorted(relacion.loc[relacion["asignatura"] == asig_det, "id_estudiante"].dropna().unique())
@@ -301,20 +341,27 @@ with t_par:
         alumno_det = st.selectbox("Estudiante:", ids_det, key="participacion_alumno")
         detalle = tr_periodo[(tr_periodo["asignatura"] == asig_det) &
                              (tr_periodo["id_estudiante"] == alumno_det)]
-        serie = detalle.assign(dia=detalle["fecha"].dt.floor("D")).groupby(
-            ["dia", "tipo_interaccion"], as_index=False).size().rename(columns={"size": "eventos"})
-        f = px.bar(serie, x="dia", y="eventos", color="tipo_interaccion",
-                   color_discrete_map=COLOR_TIPOS,
-                   title=f"Eventos por día y tipo · {alumno_det}")
-        f.update_layout(template="plotly_white")
-        st.plotly_chart(f, use_container_width=True)
+        if detalle.empty:
+            st.info("Este estudiante no tiene actividad en el período seleccionado.")
+        else:
+            serie = detalle.assign(dia=detalle["fecha"].dt.floor("D")).groupby(
+                ["dia", "tipo_interaccion"], as_index=False).size().rename(columns={"size": "eventos"})
+            f = px.bar(serie, x="dia", y="eventos", color="tipo_interaccion",
+                       color_discrete_map=COLOR_TIPOS,
+                       labels={"dia": "Día", "eventos": "Eventos", "tipo_interaccion": "Tipo de interacción"},
+                       title=f"Eventos por día y tipo · {alumno_det}")
+            f.update_layout(template="plotly_white")
+            st.plotly_chart(f, use_container_width=True)
     else:
         st.info("No hay estudiantes disponibles para esta asignatura.")
 
 # ---- Trazabilidad
 with t_tra:
     st.subheader("Trazabilidad")
-    tp = filtrar(tipos)
+    st.caption(f"Eventos hasta la fecha de corte ({fecha_corte:%d/%m/%Y}).")
+    tc = filtrar(traz_corte)
+    tp = tc.groupby(["asignatura", "tipo_interaccion"], as_index=False).size().rename(
+        columns={"size": "eventos"})
     f = px.bar(tp, x="eventos", y="asignatura", color="tipo_interaccion",
                color_discrete_map=COLOR_TIPOS, barmode="group", orientation="h",
                log_x=True, height=430,
@@ -323,7 +370,8 @@ with t_tra:
                title="Eventos por tipo de interacción · comparación legible")
     f.update_layout(template="plotly_white", legend_title_text="Tipo de interacción")
     st.plotly_chart(f, use_container_width=True)
-    m = filtrar(mapa).groupby(["dia_semana", "hora"], as_index=False)["eventos"].sum()
+    m = tc.assign(dia_semana=tc["fecha"].dt.dayofweek, hora=tc["fecha"].dt.hour).groupby(
+        ["dia_semana", "hora"], as_index=False).size().rename(columns={"size": "eventos"})
     pivote = m.pivot(index="dia_semana", columns="hora", values="eventos").reindex(range(7)).fillna(0)
     pivote.index = DIAS
     f = px.imshow(pivote, aspect="auto", color_continuous_scale=COLOR_CONTINUA,
@@ -334,6 +382,8 @@ with t_tra:
 # ---- Rendimiento
 with t_ren:
     st.subheader("Rendimiento académico")
+    st.caption("Notas y estados al 24/10 (última foto de datos): no dependen de la fecha de corte, "
+               "porque las calificaciones no tienen fecha.")
     r1, r2 = st.columns(2)
     with r1:
         f = px.bar(his, x="rango_nota_pct", y="cantidad", color="asignatura", barmode="group",
@@ -374,6 +424,7 @@ with t_rel:
         "Autónomos": "Aprueban con poco uso del campus. Acción: seguimiento habitual.",
         "Sin riesgo": "Participan y aprueban. Acción: seguimiento habitual."}
 
+    st.caption("Notas e interacciones acumuladas al 24/10: esta vista no depende de la fecha de corte.")
     st.markdown("**Grupos de riesgo**")
     st.caption("Participación alta o baja según la mediana de interacciones de cada asignatura; "
                "nota por encima o por debajo del 60% de la escala.")
@@ -481,6 +532,8 @@ with t_mat:
                title="Matriculados vs. activos por asignatura")
     f.update_layout(template="plotly_white")
     st.plotly_chart(f, use_container_width=True)
+    st.caption("El gráfico de arriba usa la fecha de corte. Las alertas de abajo se calculan sobre "
+               "todo el período (hasta el 24/10).")
     for _, r in ale.iterrows():
         if r["cantidad"] > 0:
             clase = ("alert-card--matricula" if r["alerta"] == "No matriculado con actividad"

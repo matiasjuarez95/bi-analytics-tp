@@ -40,21 +40,18 @@ La aplicación lee las siguientes tablas KPI desde `data/processed/kpi/`:
 - `kpi_alertas_matricula.csv`
 - `kpi_histograma_notas.csv`
 - `kpi_relacion_estudiante.csv`
-- `kpi_interacciones_tipo.csv`
 - `kpi_actividad_diaria.csv`
-- `kpi_actividad_semanal.csv`
-- `kpi_mapa_calor.csv`
 - `kpi_notas_instrumento.csv`
 
 También utiliza:
 
-- `data/processed/trazabilidad.csv`, para la evolución de accesos y la actividad individual.
+- `data/processed/trazabilidad.csv`, para todo lo que depende de la fecha de corte: actividad a la fecha, actividad semanal, eventos por tipo, mapa de calor, evolución de accesos y actividad individual. Coincide con `kpi_actividad_semanal`, `kpi_interacciones_tipo` y `kpi_mapa_calor` cuando la fecha de corte es el último día de datos.
 - `data/processed/calificaciones.csv`, para consultar las notas por instrumento en la ficha individual.
 
 ## Filtros
 
 - **Asignatura:** una, dos o las tres materias.
-- **Fecha de corte:** muestra la actividad de los alumnos hasta esa fecha (tarjetas de actividad, actividad semanal y diaria, situación de actividad, ficha individual y matriculados vs. activos). Las notas y los estados corresponden a la última foto de datos, porque las calificaciones no tienen fecha.
+- **Fecha de corte:** muestra la actividad de los alumnos hasta ese día inclusive (tarjetas de actividad, actividad semanal y diaria, cobertura, situación de actividad, eventos por tipo, mapa de calor, ficha individual y matriculados vs. activos). Quedan acumulados al 24/10, y así se indica en cada vista: el tiempo de uso (el reporte de participación no trae fechas), las notas y estados (las calificaciones no tienen fecha) y las alertas de matrícula.
 - **Activo reciente:** ventana de 7, 14 o 30 días antes de la fecha de corte para considerar que un alumno participa actualmente.
 
 ## Grupos de riesgo
