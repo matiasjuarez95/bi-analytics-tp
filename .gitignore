@@ -1,0 +1,25 @@
+# Entornos, credenciales y cachés
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.env
+.env.*
+!.env.example
+.DS_Store
+desktop.ini
+
+# Salidas regenerables (excepto README de cada directorio)
+data/interim/*
+!data/interim/README.md
+data/processed/*
+!data/processed/README.md
+reports/figures/*
+!reports/figures/README.md
+
+# Los Excel originales se descargan desde Drive; no incluir por accidente en commits.
+data/raw/**/*.xlsx
+data/raw/**/*.xls
+data/raw/**/*.xlsm
