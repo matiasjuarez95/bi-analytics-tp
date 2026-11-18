@@ -23,11 +23,11 @@ Se necesitan los archivos originales en `data/raw/`. Los datos procesados deben 
 
 | Pestaña | Qué muestra |
 |---|---|
-| **General** | Resumen por asignatura, estados académicos a la fecha, estudiantes activos e inactivos y actividad semanal. Incluye el promedio de notas en la tabla resumen. |
+| **General** | Resumen por asignatura, estados académicos a la fecha, actividad semanal y situación de actividad de cada matriculado a la fecha de corte (activo reciente, sin actividad reciente o sin actividad), con el listado de estudiantes para contactar. Incluye el promedio de notas en la tabla resumen. |
 | **Participación** | Tiempo de uso, cobertura, estudiantes activos por día y evolución diaria de accesos. Permite filtrar por asignatura y rango de fechas, y consultar la actividad diaria de un estudiante. |
 | **Trazabilidad** | Eventos por tipo de interacción y mapa de calor por día y hora. El gráfico de eventos usa escala logarítmica para facilitar la comparación entre categorías. |
 | **Rendimiento** | Distribución de notas, cantidad de estudiantes por estado y promedio de notas por instrumento. |
-| **Notas vs. Participación** | Gráfico de dispersión según la medida de participación elegida y correlaciones de Pearson por asignatura. Permite explorar patrones; no clasifica automáticamente grupos de riesgo. |
+| **Notas vs. Participación** | Grupos de riesgo (riesgo alto, con dificultades, autónomos y sin riesgo), gráfico de dispersión según la medida de participación elegida, coloreado por grupo de riesgo o por estado, listado de estudiantes en riesgo y correlaciones de Pearson por asignatura. |
 | **Ficha individual** | Selección de asignatura y estudiante, estado tipo semáforo, nota, tiempo de uso, interacciones, eventos, notas por instrumento y trazabilidad diaria y por tipo. |
 | **Matrícula y alertas** | Comparación entre matriculados y activos, y alertas por asignatura para estudiantes matriculados sin participación y estudiantes no matriculados con actividad. |
 
@@ -40,16 +40,30 @@ La aplicación lee las siguientes tablas KPI desde `data/processed/kpi/`:
 - `kpi_alertas_matricula.csv`
 - `kpi_histograma_notas.csv`
 - `kpi_relacion_estudiante.csv`
-- `kpi_interacciones_tipo.csv`
 - `kpi_actividad_diaria.csv`
-- `kpi_actividad_semanal.csv`
-- `kpi_mapa_calor.csv`
 - `kpi_notas_instrumento.csv`
 
 También utiliza:
 
-- `data/processed/trazabilidad.csv`, para la evolución de accesos y la actividad individual.
+- `data/processed/trazabilidad.csv`, para todo lo que depende de la fecha de corte: actividad a la fecha, actividad semanal, eventos por tipo, mapa de calor, evolución de accesos y actividad individual. Coincide con `kpi_actividad_semanal`, `kpi_interacciones_tipo` y `kpi_mapa_calor` cuando la fecha de corte es el último día de datos.
 - `data/processed/calificaciones.csv`, para consultar las notas por instrumento en la ficha individual.
+
+## Filtros
+
+- **Asignatura:** una, dos o las tres materias.
+- **Fecha de corte:** muestra la actividad de los alumnos hasta ese día inclusive (tarjetas de actividad, actividad semanal y diaria, cobertura, situación de actividad, eventos por tipo, mapa de calor, ficha individual y matriculados vs. activos). Quedan acumulados al 24/10, y así se indica en cada vista: el tiempo de uso (el reporte de participación no trae fechas), las notas y estados (las calificaciones no tienen fecha) y las alertas de matrícula.
+- **Activo reciente:** ventana de 7, 14 o 30 días antes de la fecha de corte para considerar que un alumno participa actualmente.
+
+## Grupos de riesgo
+
+Se calculan sobre los alumnos con notas, combinando dos criterios: participación alta o baja según la mediana de interacciones de cada asignatura, y nota mayor o menor al 60% de la escala.
+
+| Grupo | Participación | Nota | Acción sugerida |
+|---|---|---|---|
+| Riesgo alto | Baja | < 60% | Contactar para evitar el abandono |
+| Con dificultades | Alta | < 60% | Ofrecer apoyo académico |
+| Autónomos | Baja | ≥ 60% | Seguimiento habitual |
+| Sin riesgo | Alta | ≥ 60% | Seguimiento habitual |
 
 ## Criterios de lectura
 
