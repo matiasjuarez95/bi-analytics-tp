@@ -20,11 +20,6 @@ PROCESSED = ROOT / "data" / "processed"
 st.set_page_config(page_title="Administración · BI & Analytics", layout="wide")
 st.title("Administración de datos")
 st.caption("Actualizá la base analítica de la aplicación sin ejecutar el ETL y los KPI a mano.")
-st.warning(
-    "Esta pantalla está pensada para ejecutarse en una computadora local y por un "
-    "administrador. No publiques esta app en internet sin autenticación y controles de acceso.",
-    icon="🔒",
-)
 
 archivos = sorted(
     (p for p in RAW.rglob("*") if p.suffix.lower() in {".xlsx", ".xls", ".xlsm"}),
