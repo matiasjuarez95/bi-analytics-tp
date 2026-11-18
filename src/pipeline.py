@@ -49,7 +49,7 @@ def _bloquear(ruta: Path):
         ) from exc
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(f"pid={os.getpid()}\\n")
+            f.write(f"pid={os.getpid()}\n")
         yield
     finally:
         ruta.unlink(missing_ok=True)
@@ -127,7 +127,7 @@ def actualizar(raw: str | Path = "data/raw",
                 "fuentes_excel": len([p for p in raw.rglob("*") if p.suffix.lower() in {".xlsx", ".xls", ".xlsm"}]),
             }
             (stage / METADATA).write_text(
-                json.dumps(datos, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8"
+                json.dumps(datos, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
             )
             # El README está versionado en Git y no debe desaparecer durante el cambio.
             readme = destino / "README.md"
@@ -144,7 +144,7 @@ def actualizar(raw: str | Path = "data/raw",
                     respaldo_creado = False
                 raise
             if respaldo_creado:
-                shutil.rmtree(backup)
+                shutil.rmtree(backup, ignore_errors=True)
             return datos
         finally:
             if stage.exists():
