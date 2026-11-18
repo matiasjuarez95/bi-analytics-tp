@@ -118,7 +118,18 @@ with st.sidebar:
     st.markdown("### Filtros")
     materias_all = sorted(resumen["asignatura"].unique())
     materias = st.multiselect("Asignatura:", materias_all, default=materias_all)
+    fecha_min = trazabilidad["fecha"].min().date()
+    fecha_max = trazabilidad["fecha"].max().date()
+    fecha_corte = st.date_input("Fecha de corte:", value=fecha_max,
+                                min_value=fecha_min, max_value=fecha_max, format="DD/MM/YYYY",
+                                help="Muestra la actividad de los alumnos hasta esta fecha.")
+    dias_recientes = st.select_slider("Activo reciente = ingresó en los últimos:",
+                                      options=[7, 14, 30], value=14,
+                                      format_func=lambda d: f"{d} días")
     st.divider()
+    st.caption("La fecha de corte cambia los indicadores de **actividad**. Las notas y los "
+               "estados corresponden a la última foto de datos (24/10), porque las "
+               "calificaciones no tienen fecha.")
     st.caption("Los estados son **a la fecha** (cursada abierta): "
                "no son calificaciones finales.")
     st.caption("Población: alumnos con matrícula vigente (salvo en alertas).")
@@ -126,6 +137,25 @@ with st.sidebar:
 if not materias:
     st.warning("Elegí al menos una asignatura.")
     st.stop()
+
+# -------------------------------------------------------------
+# 3.b ACTIVIDAD A LA FECHA DE CORTE
+# -------------------------------------------------------------
+# Se calcula desde la trazabilidad de los matriculados: un alumno está
+# "activo" si tiene al menos un evento hasta la fecha de corte, y
+# "activo reciente" si su último evento está dentro de la ventana elegida.
+corte = pd.Timestamp(fecha_corte) + pd.Timedelta(days=1)          # incluye todo el día de corte
+traz_corte = trazabilidad[trazabilidad["fecha"] < corte]
+ultimo = traz_corte.groupby(["id_estudiante", "asignatura"], as_index=False)["fecha"].max()
+ultimo = ultimo.rename(columns={"fecha": "ultimo_ingreso"})
+actividad_corte = matriculados.merge(ultimo, on=["id_estudiante", "asignatura"], how="left")
+actividad_corte["dias_sin_ingresar"] = (corte - actividad_corte["ultimo_ingreso"]).dt.days
+actividad_corte["situacion"] = "Sin actividad"
+actividad_corte.loc[actividad_corte["ultimo_ingreso"].notna(), "situacion"] = "Sin actividad reciente"
+actividad_corte.loc[actividad_corte["dias_sin_ingresar"] < dias_recientes, "situacion"] = "Activo reciente"
+actividad_corte = actividad_corte[actividad_corte["asignatura"].isin(materias)]
+COLOR_SITUACION = {"Activo reciente": "#4E8A6A", "Sin actividad reciente": "#D39B35",
+                   "Sin actividad": "#C86460"}
 
 
 def filtrar(df: pd.DataFrame) -> pd.DataFrame:
@@ -143,20 +173,25 @@ st.markdown('<p class="sub-title">Participación, trazabilidad y rendimiento de 
             'por asignatura.</p>', unsafe_allow_html=True)
 
 matric = int(res["matriculados"].sum())
-activos = int(res["activos"].sum())
+activos = int((actividad_corte["situacion"] != "Sin actividad").sum())
+recientes = int((actividad_corte["situacion"] == "Activo reciente").sum())
 total_con_notas = res["con_notas"].sum()
 nota_media = ((res["promedio_nota_pct_solo_con_notas"] * res["con_notas"]).sum() / total_con_notas
               if total_con_notas > 0 else None)
 sin_part = int(ale.loc[ale["alerta"] == "Matriculado sin participación", "cantidad"].sum())
 no_mat = int(ale.loc[ale["alerta"] == "No matriculado con actividad", "cantidad"].sum())
 
-c1, c2, c3, c4 = st.columns(4)
+st.caption(f"Actividad a la fecha de corte: **{fecha_corte:%d/%m/%Y}**")
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Matriculados", f"{matric:,}".replace(",", "."))
 c2.metric("Activos", f"{activos / matric * 100:.1f}%" if matric else "-", f"{activos} de {matric}")
-c3.metric("Nota media (%)", "Sin datos" if nota_media is None else f"{nota_media:.1f}",
+c3.metric(f"Activos últimos {dias_recientes} días",
+          f"{recientes / matric * 100:.1f}%" if matric else "-",
+          f"{recientes} de {matric}", delta_color="off")
+c4.metric("Nota media (%)", "Sin datos" if nota_media is None else f"{nota_media:.1f}",
           None if nota_media is None else "solo alumnos con notas")
-c4.metric("Alertas de matrícula", f"{sin_part + no_mat}",
-          f"{sin_part} sin participar · {no_mat} no matric.", delta_color="off")
+c5.metric("Alertas de matrícula", f"{sin_part + no_mat}",
+          f"{sin_part} sin part. · {no_mat} no matric.", delta_color="off")
 st.write("")
 
 # -------------------------------------------------------------
@@ -178,26 +213,50 @@ with t_gen:
         f.update_layout(template="plotly_white")
         st.plotly_chart(f, use_container_width=True)
     with g2:
-        a = filtrar(semanal)
+        a = filtrar(semanal).copy()
+        a = a[pd.to_datetime(a["semana_inicio"]) < corte]
         f = px.line(a, x="semana_inicio", y="eventos", color="asignatura",
+                    labels={"semana_inicio": "Semana", "eventos": "Eventos", "asignatura": "Asignatura"},
                     title="Actividad semanal (eventos del LMS)")
         f.update_layout(template="plotly_white")
         st.plotly_chart(f, use_container_width=True)
-    st.subheader("Estudiantes activos e inactivos")
-    act = res.melt(id_vars="asignatura", value_vars=["activos", "inactivos"],
-                   var_name="situacion", value_name="estudiantes")
-    act["situacion"] = act["situacion"].map({"activos": "Activos", "inactivos": "Inactivos"})
-    f = px.bar(act, x="asignatura", y="estudiantes", color="situacion", barmode="group",
-               color_discrete_map=COLOR_ACTIVIDAD,
-               title="Activos vs. inactivos por asignatura")
+    st.subheader("Actividad reciente de los estudiantes")
+    st.caption(f"Situación de cada matriculado al {fecha_corte:%d/%m/%Y}: **activo reciente** si ingresó "
+               f"en los últimos {dias_recientes} días, **sin actividad reciente** si ingresó antes pero "
+               "no en ese período, y **sin actividad** si nunca ingresó.")
+    act = (actividad_corte.groupby(["asignatura", "situacion"], as_index=False).size()
+           .rename(columns={"size": "estudiantes"}))
+    f = px.bar(act, x="asignatura", y="estudiantes", color="situacion", barmode="stack",
+               color_discrete_map=COLOR_SITUACION,
+               category_orders={"situacion": list(COLOR_SITUACION)},
+               labels={"asignatura": "Asignatura", "estudiantes": "Estudiantes", "situacion": "Situación"},
+               title="Situación de actividad por asignatura")
     f.update_layout(template="plotly_white")
     st.plotly_chart(f, use_container_width=True)
-    tabla_general = res[["asignatura", "matriculados", "activos", "activos_pct", "inactivos", "inactivos_pct",
-                         "promedio_nota_pct_solo_con_notas", "con_notas"]].rename(columns={
-        "asignatura": "Asignatura", "matriculados": "Matriculados", "activos": "Activos",
-        "activos_pct": "Activos (%)", "inactivos": "Inactivos", "inactivos_pct": "Inactivos (%)",
+    sin_reciente = actividad_corte[actividad_corte["situacion"] != "Activo reciente"].sort_values(
+        ["asignatura", "dias_sin_ingresar"], ascending=[True, False])
+    with st.expander(f"Ver los {len(sin_reciente)} estudiantes sin actividad reciente (para contactar)"):
+        st.dataframe(sin_reciente.assign(ultimo_ingreso=sin_reciente["ultimo_ingreso"].dt.strftime("%d/%m/%Y"))
+                     [["asignatura", "id_estudiante", "situacion", "ultimo_ingreso", "dias_sin_ingresar"]]
+                     .rename(columns={"asignatura": "Asignatura", "id_estudiante": "Estudiante",
+                                      "situacion": "Situación", "ultimo_ingreso": "Último ingreso",
+                                      "dias_sin_ingresar": "Días sin ingresar"}),
+                     use_container_width=True, hide_index=True)
+    conteo = actividad_corte.assign(
+        activo=actividad_corte["situacion"] != "Sin actividad",
+        reciente=actividad_corte["situacion"] == "Activo reciente").groupby(
+        "asignatura", as_index=False)[["activo", "reciente"]].sum()
+    tabla_general = res[["asignatura", "matriculados", "promedio_nota_pct_solo_con_notas", "con_notas"]].merge(
+        conteo, on="asignatura")
+    tabla_general["activo_pct"] = (tabla_general["activo"] / tabla_general["matriculados"] * 100).round(1)
+    tabla_general["reciente_pct"] = (tabla_general["reciente"] / tabla_general["matriculados"] * 100).round(1)
+    tabla_general = tabla_general[["asignatura", "matriculados", "activo", "activo_pct", "reciente", "reciente_pct",
+                                   "promedio_nota_pct_solo_con_notas", "con_notas"]].rename(columns={
+        "asignatura": "Asignatura", "matriculados": "Matriculados", "activo": "Activos",
+        "activo_pct": "Activos (%)", "reciente": f"Activos últimos {dias_recientes} días",
+        "reciente_pct": f"Activos últimos {dias_recientes} días (%)",
         "promedio_nota_pct_solo_con_notas": "Nota media (%)", "con_notas": "Alumnos con notas"})
-    st.dataframe(tabla_general,
+    st.dataframe(tabla_general.round(1),
                  use_container_width=True, hide_index=True)
 
 # ---- Participación
@@ -216,6 +275,7 @@ with t_par:
         st.plotly_chart(f, use_container_width=True)
     d = filtrar(diaria).copy()
     d["dia"] = pd.to_datetime(d["dia"])
+    d = d[d["dia"] < corte]
     rango = st.slider("Rango de fechas:", d["dia"].min().date(), d["dia"].max().date(),
                       (d["dia"].min().date(), d["dia"].max().date()))
     d = d[(d["dia"].dt.date >= rango[0]) & (d["dia"].dt.date <= rango[1])]
@@ -295,14 +355,66 @@ with t_ren:
 # ---- Notas vs participación
 with t_rel:
     st.subheader("Relación entre participación y notas")
-    rel = filtrar(relacion).dropna(subset=["nota_pct"])
-    variable = st.selectbox("Medida de participación:",
-                            ["tiempo_uso_min", "interacciones", "eventos_trazabilidad"])
-    f = px.scatter(rel, x=variable, y="nota_pct", color="estado_a_la_fecha",
-                   color_discrete_map=COLOR_ESTADO, hover_data=["id_estudiante", "asignatura"],
+    rel = filtrar(relacion).dropna(subset=["nota_pct"]).copy()
+
+    # Grupos de riesgo: participación alta/baja según la mediana de interacciones
+    # de cada asignatura, y nota por encima o por debajo del 60% de la escala.
+    mediana = rel.groupby("asignatura")["interacciones"].transform("median")
+    part_alta = rel["interacciones"] >= mediana
+    nota_ok = rel["nota_pct"] >= 60
+    rel["grupo_riesgo"] = "Sin riesgo"
+    rel.loc[~part_alta & ~nota_ok, "grupo_riesgo"] = "Riesgo alto"
+    rel.loc[part_alta & ~nota_ok, "grupo_riesgo"] = "Con dificultades"
+    rel.loc[~part_alta & nota_ok, "grupo_riesgo"] = "Autónomos"
+    COLOR_RIESGO = {"Riesgo alto": "#C86460", "Con dificultades": "#D39B35",
+                    "Autónomos": "#6FA6A1", "Sin riesgo": "#4E8A6A"}
+    DESCRIPCION_RIESGO = {
+        "Riesgo alto": "Participan poco y tienen nota menor a 60%. Acción: contactarlos para evitar el abandono.",
+        "Con dificultades": "Participan, pero no alcanzan el 60%. Acción: ofrecer apoyo académico.",
+        "Autónomos": "Aprueban con poco uso del campus. Acción: seguimiento habitual.",
+        "Sin riesgo": "Participan y aprueban. Acción: seguimiento habitual."}
+
+    st.markdown("**Grupos de riesgo**")
+    st.caption("Participación alta o baja según la mediana de interacciones de cada asignatura; "
+               "nota por encima o por debajo del 60% de la escala.")
+    columnas = st.columns(4)
+    for col, grupo in zip(columnas, COLOR_RIESGO):
+        cant = int((rel["grupo_riesgo"] == grupo).sum())
+        col.metric(grupo, cant, f"{cant / len(rel) * 100:.0f}% de los alumnos con notas" if len(rel) else None,
+                   delta_color="off", help=DESCRIPCION_RIESGO[grupo])
+
+    NOMBRES_MEDIDA = {"interacciones": "Interacciones en el LMS", "tiempo_uso_min": "Tiempo de uso (min)",
+                      "eventos_trazabilidad": "Eventos de trazabilidad"}
+    m1, m2 = st.columns(2)
+    variable = m1.selectbox("Medida de participación:", list(NOMBRES_MEDIDA),
+                            format_func=NOMBRES_MEDIDA.get)
+    colorear = m2.radio("Colorear por:", ["Grupo de riesgo", "Estado a la fecha"], horizontal=True)
+    if colorear == "Grupo de riesgo":
+        color, mapa_color = "grupo_riesgo", COLOR_RIESGO
+    else:
+        color, mapa_color = "estado_a_la_fecha", COLOR_ESTADO
+    f = px.scatter(rel, x=variable, y="nota_pct", color=color,
+                   color_discrete_map=mapa_color, category_orders={color: list(mapa_color)},
+                   hover_data=["id_estudiante", "asignatura"],
+                   labels={variable: NOMBRES_MEDIDA[variable], "nota_pct": "Nota (% de la escala)",
+                           "grupo_riesgo": "Grupo de riesgo", "estado_a_la_fecha": "Estado a la fecha",
+                           "id_estudiante": "Estudiante", "asignatura": "Asignatura"},
                    title="Nota (%) vs. participación")
+    f.add_hline(y=60, line_dash="dot", line_color="#94A3B8")
     f.update_layout(template="plotly_white")
     st.plotly_chart(f, use_container_width=True)
+    if variable != "interacciones":
+        st.caption("Los grupos se calculan con las interacciones; con otra medida en el eje, "
+                   "algunos puntos pueden aparecer del otro lado de la mitad.")
+
+    a_contactar = rel[rel["grupo_riesgo"].isin(["Riesgo alto", "Con dificultades"])].sort_values(
+        ["grupo_riesgo", "asignatura", "nota_pct"], ascending=[False, True, True])
+    with st.expander(f"Ver los {len(a_contactar)} estudiantes en riesgo alto o con dificultades"):
+        st.dataframe(a_contactar[["grupo_riesgo", "asignatura", "id_estudiante", "nota_pct", "interacciones",
+                                  "estado_a_la_fecha"]].rename(columns={
+            "grupo_riesgo": "Grupo", "asignatura": "Asignatura", "id_estudiante": "Estudiante",
+            "nota_pct": "Nota (%)", "interacciones": "Interacciones", "estado_a_la_fecha": "Estado"}).round(1),
+            use_container_width=True, hide_index=True)
     cor = res[["asignatura", "correlacion_tiempo_nota",
                "correlacion_interacciones_nota", "correlacion_eventos_nota"]]
     st.markdown("**Correlación de Pearson** (relación, no causalidad):")
@@ -334,8 +446,8 @@ with t_ind:
         f = px.bar(mis_notas, x="instrumento", y="nota_100", title="Notas (sobre 100)")
         f.update_layout(template="plotly_white")
         st.plotly_chart(f, use_container_width=True)
-    detalle = trazabilidad[(trazabilidad["asignatura"] == asig) &
-                           (trazabilidad["id_estudiante"] == alumno)]
+    detalle = traz_corte[(traz_corte["asignatura"] == asig) &
+                         (traz_corte["id_estudiante"] == alumno)]
     st.markdown("**Trazabilidad individual**")
     if detalle.empty:
         st.info("No hay eventos de trazabilidad para este estudiante.")
@@ -358,7 +470,10 @@ with t_ind:
 with t_mat:
     st.subheader("Matrícula y alertas")
     st.markdown("**Comparación de estudiantes matriculados y activos**")
-    comparacion = res[["asignatura", "matriculados", "activos"]].melt(
+    comparacion = res[["asignatura", "matriculados"]].merge(
+        actividad_corte[actividad_corte["situacion"] != "Sin actividad"].groupby(
+            "asignatura", as_index=False).size().rename(columns={"size": "activos"}),
+        on="asignatura", how="left").fillna(0).melt(
         id_vars="asignatura", var_name="grupo", value_name="estudiantes")
     comparacion["grupo"] = comparacion["grupo"].map({"matriculados": "Matriculados", "activos": "Activos"})
     f = px.bar(comparacion, x="asignatura", y="estudiantes", color="grupo", barmode="group",
