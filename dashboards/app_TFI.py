@@ -82,6 +82,8 @@ def tabla(nombre: str, carpeta: Path = KPI) -> pd.DataFrame:
         st.error(f"Falta el archivo {e}. Ejecutá primero:\n\n"
                  "`python -m src.etl.procesar_datos data/raw data/processed`\n\n"
                  "`python -m src.kpi data/processed data/processed/kpi`")
+        st.info("Si todavía no tenés datos procesados, podés generarlos desde la pantalla de Administración.")
+        st.page_link("pages/1_Administracion.py", label="Abrir administración de datos", icon="⚙️")
         st.stop()
 
 
