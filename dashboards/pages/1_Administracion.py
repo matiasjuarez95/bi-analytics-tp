@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.pipeline import actualizar, leer_estado
+from src.demo import es_demo
 
 RAW = ROOT / "data" / "raw"
 PROCESSED = ROOT / "data" / "processed"
@@ -36,6 +37,9 @@ with st.expander("Ubicaciones locales", expanded=not RAW.exists()):
     st.code(str(PROCESSED), language=None)
     if not RAW.exists():
         st.info("Creá data/raw y colocá allí los Excel originales con la estructura del ETL.")
+
+if es_demo(PROCESSED):
+    st.info("La aplicación está utilizando datos ficticios de demostración. Para procesar los archivos originales, incorporalos en data/raw y ejecutá una nueva actualización.")
 
 if estado:
     st.subheader("Resumen de la última actualización")
@@ -67,7 +71,7 @@ st.write(
 st.caption("La actualización puede tardar según el tamaño de los Excel. No cierres el servidor durante el proceso.")
 puede_actualizar = RAW.is_dir() and bool(archivos)
 if not puede_actualizar:
-    st.error("No hay archivos Excel disponibles en data/raw para iniciar una actualización.")
+    st.caption("No hay fuentes Excel cargadas. Los dashboards se pueden consultar con los datos de demostración disponibles.")
 
 if st.button("Actualizar datos", type="primary", disabled=not puede_actualizar):
     try:
