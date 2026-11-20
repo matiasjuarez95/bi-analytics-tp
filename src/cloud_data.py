@@ -5,7 +5,6 @@ Las credenciales se cargan en Streamlit Secrets y nunca se guardan en Git.
 """
 from __future__ import annotations
 
-import io
 import shutil
 import stat
 import tempfile
@@ -102,4 +101,7 @@ def actualizar_desde_drive(
 
 def fuentes_disponibles(secrets) -> bool:
     """Detecta si Streamlit Secrets contiene credenciales reales de Drive."""
-    return "gcp_service_account" in secrets and "drive_zip_file_id" in secrets
+    try:
+        return "gcp_service_account" in secrets and "drive_zip_file_id" in secrets
+    except FileNotFoundError:
+        return False
