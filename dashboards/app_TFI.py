@@ -27,24 +27,6 @@ def encontrar_raiz() -> Path:
 RAIZ = encontrar_raiz()
 PROC = RAIZ / "data" / "processed"
 KPI = PROC / "kpi"
-# En Streamlit Cloud, recupera los Excel reales desde Drive y ejecuta ETL + KPI
-# si este servidor todavía no tiene una publicación procesada.
-if not (KPI / "kpi_resumen_asignatura.csv").is_file():
-    try:
-        from src.cloud_data import actualizar_desde_drive, fuentes_disponibles
-        if fuentes_disponibles(st.secrets):
-            with st.spinner("Cargando datos académicos..."):
-                actualizar_desde_drive(
-                    PROC, dict(st.secrets["gcp_service_account"]),
-                    str(st.secrets["drive_zip_file_id"]),
-                )
-    except FileNotFoundError:
-        # Instalación local sin archivo de secrets: usar las fuentes locales.
-        pass
-    except Exception as exc:
-        st.error("No fue posible cargar los datos desde el almacenamiento configurado.")
-        st.exception(exc)
-        st.stop()
 DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 # Paleta unificada: azul petróleo, teal y acentos cálidos
 PALETA_GRAFICOS = ["#4F7892", "#6FA6A1", "#D8A15D", "#CB746A", "#8C80A8", "#8B9A70"]
@@ -64,6 +46,23 @@ SEMAFORO = {"Promociona": "🟢 Verde: promociona", "Regular": "🟡 Amarillo: r
 
 st.set_page_config(page_title="Seguimiento académico LMS", layout="wide",
                    initial_sidebar_state="expanded")
+
+# En Streamlit Cloud, recupera los Excel reales desde Drive y ejecuta ETL + KPI
+# si este servidor todavía no tiene una publicación procesada.
+if not (KPI / "kpi_resumen_asignatura.csv").is_file():
+    try:
+        from src.cloud_data import actualizar_desde_drive, fuentes_disponibles
+        if fuentes_disponibles(st.secrets):
+            with st.spinner("Cargando datos académicos..."):
+                actualizar_desde_drive(
+                    PROC, dict(st.secrets["gcp_service_account"]),
+                    str(st.secrets["drive_zip_file_id"]),
+                )
+    except Exception as exc:
+        st.error("No fue posible cargar los datos desde el almacenamiento configurado.")
+        st.exception(exc)
+        st.stop()
+
 
 st.markdown("""
 <style>
