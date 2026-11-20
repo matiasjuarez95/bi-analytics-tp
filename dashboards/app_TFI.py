@@ -47,6 +47,23 @@ SEMAFORO = {"Promociona": "🟢 Verde: promociona", "Regular": "🟡 Amarillo: r
 st.set_page_config(page_title="Seguimiento académico LMS", layout="wide",
                    initial_sidebar_state="expanded")
 
+# En Streamlit Cloud, recupera los Excel reales desde Drive y ejecuta ETL + KPI
+# si este servidor todavía no tiene una publicación procesada.
+if not (KPI / "kpi_resumen_asignatura.csv").is_file():
+    try:
+        from src.cloud_data import actualizar_desde_drive, fuentes_disponibles
+        if fuentes_disponibles(st.secrets):
+            with st.spinner("Cargando datos académicos..."):
+                actualizar_desde_drive(
+                    PROC, dict(st.secrets["gcp_service_account"]),
+                    str(st.secrets["drive_zip_file_id"]),
+                )
+    except Exception as exc:
+        st.error("No fue posible cargar los datos desde el almacenamiento configurado.")
+        st.exception(exc)
+        st.stop()
+
+
 st.markdown("""
 <style>
     .main-title { font-size: 2.0rem; font-weight: 700; color: #315A70; margin-bottom: 2px; }

@@ -43,6 +43,46 @@ También admite `--raw data/raw --processed data/processed`. Los comandos indivi
 - No subir Excel ni CSV con información de alumnos al repositorio.
 - Para cargar datos se necesitan los Excel de origen y permisos de escritura en `data/processed/`.
 
+## Despliegue en Streamlit Community Cloud con datos reales
+
+La aplicación puede iniciarse en Streamlit Cloud con los **Excel originales del TP**, almacenados en un ZIP privado de Google Drive. Si al iniciar no encuentra los CSV procesados en el servidor, descarga el ZIP con permisos de solo lectura, ejecuta el ETL 6.1, valida las salidas y calcula los KPI 6.2. No requiere una base de datos ni incorporar los Excel a GitHub.
+
+### Configuración
+
+1. Crear una cuenta de servicio en Google Cloud y habilitar **Google Drive API** en su proyecto. Generar una clave JSON de esa cuenta.
+2. En Google Drive, compartir el archivo `Datos_LMS_Anonimizados.zip` (únicamente permiso de lectura) con el correo `client_email` de la cuenta de servicio. El ZIP debe conservar la estructura de asignaturas y matrícula requerida por el ETL.
+3. En Streamlit Community Cloud, crear una aplicación desde el repositorio GitHub privado, rama `main`, archivo de entrada `dashboards/app_TFI.py`.
+4. En **Advanced settings → Secrets**, añadir la configuración siguiente y reemplazar los valores de ejemplo por los de la cuenta de servicio; mantener la clave **exclusivamente en Secrets**, nunca en Git:
+
+```toml
+drive_zip_file_id = "1nQtOmzI0o8G3tXJ-CrzUPnyk5npweO7b"
+admin_password = "ELEGIR_UNA_CLAVE_LARGA_Y_UNICA"
+
+[gcp_service_account]
+type = "service_account"
+project_id = "TU_PROJECT_ID"
+private_key_id = "TU_PRIVATE_KEY_ID"
+private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+client_email = "CUENTA@PROYECTO.iam.gserviceaccount.com"
+client_id = "TU_CLIENT_ID"
+token_uri = "https://oauth2.googleapis.com/token"
+auth_uri = "https://accounts.google.com/o/oauth2/auth"
+auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/CUENTA"
+```
+
+Los campos deben copiarse fielmente del JSON de la cuenta de servicio. La aplicación utiliza el scope `drive.readonly`; no escribe ni modifica el Drive. El ID configurado apunta al ZIP real de la carpeta de trabajo.
+
+La primera apertura de un servidor nuevo puede demorar porque ejecuta la carga inicial. Los resultados se guardan en `data/processed/` del servidor y se recalculan automáticamente cuando un servidor se inicia sin esos archivos. No se garantiza persistencia del disco de Streamlit Cloud entre reinicios.
+
+La página **Administración de datos** permite volver a descargar y procesar las fuentes desde Drive únicamente si se ingresa la clave `admin_password`. La clave evita ejecuciones accidentales, pero no reemplaza la configuración de acceso privado a la app.
+
+**Privacidad:** aunque el conjunto de archivos se denomine anonimizado, verificar la ausencia de datos personales identificables y limitar quién puede acceder a la app antes de compartir el enlace. No subir la clave JSON, archivos Excel ni CSV procesados a GitHub.
+
+### Ejecución local
+
+Sin Secrets, se conserva el flujo de trabajo local con archivos en `data/raw/` y el botón **Actualizar datos** de Administración. No se necesita Google Cloud para ejecutar el proyecto localmente.
+
 ## Vistas del dashboard
 
 | Pestaña | Qué muestra |

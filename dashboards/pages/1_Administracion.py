@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import hmac
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.pipeline import actualizar, leer_estado
+from src.cloud_data import actualizar_desde_drive, fuentes_disponibles
 
 RAW = ROOT / "data" / "raw"
 PROCESSED = ROOT / "data" / "processed"
@@ -65,14 +67,38 @@ st.write(
     "Si ocurre un error, los CSV anteriores permanecen disponibles."
 )
 st.caption("La actualización puede tardar según el tamaño de los Excel. No cierres el servidor durante el proceso.")
-puede_actualizar = RAW.is_dir() and bool(archivos)
-if not puede_actualizar:
-    st.error("No hay archivos Excel disponibles en data/raw para iniciar una actualización.")
+try:
+    drive_configurado = fuentes_disponibles(st.secrets)
+except FileNotFoundError:
+    drive_configurado = False
+
+# La acción que actualiza fuentes privadas en la nube exige una clave de gestión.
+clave_configurada = ""
+if drive_configurado:
+    clave_configurada = str(st.secrets.get("admin_password", ""))
+autorizado = not drive_configurado
+if drive_configurado:
+    st.caption("Las fuentes se obtienen desde el almacenamiento de Google Drive configurado.")
+    if clave_configurada:
+        clave_ingresada = st.text_input("Clave de actualización", type="password")
+        autorizado = hmac.compare_digest(clave_ingresada, clave_configurada)
+    else:
+        st.info("La actualización manual está deshabilitada. Los datos se cargan automáticamente al iniciar la aplicación.")
+
+puede_actualizar = autorizado and (drive_configurado or (RAW.is_dir() and bool(archivos)))
+if not puede_actualizar and not drive_configurado:
+    st.info("No hay archivos Excel disponibles en data/raw para iniciar una actualización.")
 
 if st.button("Actualizar datos", type="primary", disabled=not puede_actualizar):
     try:
         with st.spinner("Procesando fuentes y calculando indicadores..."):
-            resultado = actualizar(RAW, PROCESSED)
+            if drive_configurado:
+                resultado = actualizar_desde_drive(
+                    PROCESSED, dict(st.secrets["gcp_service_account"]),
+                    str(st.secrets["drive_zip_file_id"]),
+                )
+            else:
+                resultado = actualizar(RAW, PROCESSED)
         st.cache_data.clear()
         st.session_state["pipeline_ultimo_resultado"] = resultado
         st.rerun()
