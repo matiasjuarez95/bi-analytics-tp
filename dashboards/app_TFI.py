@@ -5,7 +5,14 @@ Lee SOLO las tablas que generan el ETL (6.1) y los KPI (6.2); no calcula nada nu
 Ejecutar desde la raíz del repo:
     python -m streamlit run dashboards/app_TFI.py
 """
+import sys
 from pathlib import Path
+
+# Streamlit ejecuta este archivo desde dashboards/; los módulos del proyecto
+# se encuentran en el directorio raíz del repositorio.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 import plotly.express as px
