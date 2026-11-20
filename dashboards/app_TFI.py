@@ -27,6 +27,9 @@ def encontrar_raiz() -> Path:
 RAIZ = encontrar_raiz()
 PROC = RAIZ / "data" / "processed"
 KPI = PROC / "kpi"
+# Inicialización de datos ficticios únicamente cuando no existe una base procesada.
+from src.demo import preparar_si_faltan_datos, es_demo
+preparar_si_faltan_datos(PROC, RAIZ / "data" / "raw")
 DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 # Paleta unificada: azul petróleo, teal y acentos cálidos
 PALETA_GRAFICOS = ["#4F7892", "#6FA6A1", "#D8A15D", "#CB746A", "#8C80A8", "#8B9A70"]
@@ -170,6 +173,8 @@ res, est, ale, his = filtrar(resumen), filtrar(estados), filtrar(alertas), filtr
 st.markdown('<p class="main-title">Seguimiento académico LMS</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">Participación, trazabilidad y rendimiento de estudiantes '
             'por asignatura.</p>', unsafe_allow_html=True)
+if es_demo(PROC):
+    st.info("**Datos de demostración.** Cohorte y eventos ficticios; los resultados no corresponden a los archivos originales del proyecto.")
 
 matric = int(res["matriculados"].sum())
 activos = int((actividad_corte["situacion"] != "Sin actividad").sum())
